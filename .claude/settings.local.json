@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__brave_web_search__brave_web_search",
+      "mcp__math_formulas__pi_calc"
+    ],
+    "deny": []
+  }
+}
