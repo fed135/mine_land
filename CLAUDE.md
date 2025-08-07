@@ -37,3 +37,11 @@ cd mineland_server && npm start
 - **Frontend:** SvelteKit + Canvas + WebSocket client
 - **Backend:** Node.js + TypeScript + Kalm WebSocket server
 - **Communication:** Real-time WebSocket connection between client and server
+
+## Rules for CLAUDE CLI
+
+- Perform atomic changes when asked to fix a bug.
+- Ask clarifying questions when multiple viable options are present.
+- Do NOT take creative liberties around game rules.
+- Do not bypass business logic in order to fix a bug.
+- Do not remove console logs unless asked to.

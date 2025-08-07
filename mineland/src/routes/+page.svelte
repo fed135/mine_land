@@ -4,8 +4,7 @@
 	import ws from '@kalm/ws';
 
 	// Game constants
-	const TILE_SIZE = 32;
-	const SERVER_URL = 'ws://localhost:8080';
+	const TILE_SIZE = 48;
 	
 	// Minesweeper colors
 	const COLORS = {
@@ -40,9 +39,7 @@
 	});
 
 	// Input handling
-	let keys = $state({});
-	let lastMoveTime = 0;
-	const MOVE_THROTTLE = 200; // ms between moves
+	let pressedKeys = new Set();
 
 	onMount(() => {
 		if (canvas) {
@@ -97,6 +94,12 @@
 
 			client.subscribe('viewport-update', (data) => {
 				gameState.viewport = data;
+				// Update our player position from the viewport data
+				const ourPlayer = data.players.find(p => p.id === gameState.player?.id);
+				if (ourPlayer && gameState.player) {
+					gameState.player.x = ourPlayer.x;
+					gameState.player.y = ourPlayer.y;
+				}
 			});
 
 			client.subscribe('player-update', (data) => {
@@ -146,31 +149,30 @@
 	}
 
 	function handleKeyDown(event) {
-		keys[event.code] = true;
-		
-		// Throttle movement
-		const now = Date.now();
-		if (now - lastMoveTime < MOVE_THROTTLE) return;
+		// Prevent repeated events when key is held down
+		if (pressedKeys.has(event.code)) return;
+		pressedKeys.add(event.code);
 		
 		if (!gameState.player || !gameState.player.alive) return;
 		
 		let newX = gameState.player.x;
 		let newY = gameState.player.y;
 		
-		if (keys['KeyW'] || keys['ArrowUp']) newY -= 1;
-		if (keys['KeyS'] || keys['ArrowDown']) newY += 1;
-		if (keys['KeyA'] || keys['ArrowLeft']) newX -= 1;
-		if (keys['KeyD'] || keys['ArrowRight']) newX += 1;
+		// Only process the specific key that was pressed
+		if (event.code === 'KeyW' || event.code === 'ArrowUp') newY -= 1;
+		if (event.code === 'KeyS' || event.code === 'ArrowDown') newY += 1;
+		if (event.code === 'KeyA' || event.code === 'ArrowLeft') newX -= 1;
+		if (event.code === 'KeyD' || event.code === 'ArrowRight') newX += 1;
 		
 		if (newX !== gameState.player.x || newY !== gameState.player.y) {
 			sendPlayerAction('move', newX, newY);
-			lastMoveTime = now;
 		}
 	}
 
 	function handleKeyUp(event) {
-		keys[event.code] = false;
+		pressedKeys.delete(event.code);
 	}
+
 
 	function handleCanvasClick(event) {
 		const { x, y } = getClickedTile(event);
@@ -394,7 +396,7 @@
 	function renderMine(x, y, exploded = false) {
 		const centerX = x + TILE_SIZE / 2;
 		const centerY = y + TILE_SIZE / 2;
-		const radius = TILE_SIZE * 0.3;
+		const radius = TILE_SIZE * 0.25;
 		
 		// Mine body (black circle)
 		ctx.fillStyle = exploded ? COLORS.MINE : '#000000';
@@ -432,7 +434,7 @@
 	
 	function renderNumber(x, y, number) {
 		ctx.fillStyle = COLORS.NUMBERS[number - 1] || '#000000';
-		ctx.font = 'bold 18px Arial';
+		ctx.font = 'bold 24px Arial';
 		ctx.textAlign = 'center';
 		ctx.textBaseline = 'middle';
 		ctx.fillText(number.toString(), x + TILE_SIZE / 2, y + TILE_SIZE / 2);
@@ -493,11 +495,11 @@
 		}
 		
 		// Player name with background
-		ctx.font = '10px Arial';
+		ctx.font = '12px Arial';
 		ctx.textAlign = 'center';
 		ctx.textBaseline = 'middle';
 		
-		const nameY = y - 8;
+		const nameY = y - 12;
 		const textWidth = ctx.measureText(player.username).width;
 		
 		// Name background
