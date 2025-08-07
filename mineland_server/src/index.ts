@@ -417,6 +417,10 @@ server.on('connection', (client: any) => {
   };
   client.write('welcome', welcomePayload);
   
+  // Send initial leaderboard data
+  const allPlayers = Array.from(gameState.players.values());
+  client.write('leaderboard-update', { players: allPlayers });
+  
   // Notify other clients about new player
   server.broadcast('player-joined', { player });
   
@@ -461,6 +465,10 @@ server.on('connection', (client: any) => {
         x: data.x,
         y: data.y
       });
+      
+      // Broadcast leaderboard update to all players
+      const allPlayers = Array.from(gameState.players.values());
+      server.broadcast('leaderboard-update', { players: allPlayers });
       
       // Check for game end
       if (checkGameEnd() && !gameState.gameEnded) {

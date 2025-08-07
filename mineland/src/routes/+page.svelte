@@ -3,6 +3,10 @@
 	import { connect, routines } from 'kalm';
 	import ws from '@kalm/ws';
 
+	let fps = 0;
+	let net = 0;
+	let renderCats = {};
+
 	// Game constants
 	const TILE_SIZE = 48;
 	
@@ -27,21 +31,24 @@
 		]
 	};
 
-	// Game state
-	let canvas = $state();
-	let ctx = $state();
-	let client = $state();
-	let connected = $state(false);
-	let gameState = $state({
+	// Game state - non-reactive for performance
+	let canvas;
+	let ctx;
+	let client;
+	let connected = false;
+	let gameState = {
 		player: null,
 		viewport: { tiles: [], players: [] },
 		gameInfo: { startTime: 0, ended: false, minesRemaining: 0 },
-		spawnPoints: []
-	});
+		spawnPoints: [],
+		allPlayers: []
+	};
 
 	// Input handling
 	let pressedKeys = new Set();
-	let hoveredTile = $state({ x: null, y: null });
+	let lastMouseX = 0;
+	let lastMouseY = 0;
+	
 
 	onMount(() => {
 		if (canvas) {
@@ -69,7 +76,7 @@
 				port: 8080,
 				host: 'localhost',
 				transport: ws(),
-				routine: routines.tick({ hz: 60 })
+				routine: routines.realtime()
 			});
 			
 			client.on('connect', () => {
@@ -88,12 +95,18 @@
 				console.error('Kalm client error:', error);
 			});
 
+			client.on('frame', (body) => {
+				console.log(body);
+				net++;
+			});
+
 			// Subscribe to server messages
 			client.subscribe('welcome', (data) => {
 				gameState.player = data.player;
 				gameState.gameInfo = data.gameState;
 				gameState.viewport = data.viewport;
 				gameState.spawnPoints = data.spawnPoints || [];
+				gameState.allPlayers = data.viewport.players || [];
 			});
 
 			client.subscribe('viewport-update', (data) => {
@@ -132,6 +145,10 @@
 
 			client.subscribe('player-disconnected', (data) => {
 				gameState.viewport.players = gameState.viewport.players.filter(p => p.id !== data.playerId);
+			});
+
+			client.subscribe('leaderboard-update', (data) => {
+				gameState.allPlayers = data.players;
 			});
 		} catch (error) {
 			console.error('Failed to connect to server:', error);
@@ -189,9 +206,10 @@
 	}
 	
 	function handleMouseMove(event) {
-		const { x, y } = getClickedTile(event);
-		hoveredTile.x = x;
-		hoveredTile.y = y;
+		// Just store raw mouse coordinates, calculate tile in render loop
+		const rect = canvas.getBoundingClientRect();
+		lastMouseX = event.clientX - rect.left;
+		lastMouseY = event.clientY - rect.top;
 	}
 
 
@@ -207,6 +225,7 @@
 		const { x, y } = getClickedTile(event);
 		if (x !== null && y !== null) {
 			// Check if tile is already flagged to decide unflag vs flag
+			// Note: This uses a quick lookup during event handling, separate from render performance
 			const tile = gameState.viewport.tiles.find(t => t.x === x && t.y === y);
 			const action = tile && tile.flagged ? 'unflag' : 'flag';
 			sendPlayerAction(action, x, y);
@@ -228,13 +247,31 @@
 		
 		return { x: tileX, y: tileY };
 	}
+	
+	function getHoveredTile(mouseX, mouseY) {
+		if (!gameState.player) return { x: null, y: null };
+		
+		const centerX = canvas.width / 2;
+		const centerY = canvas.height / 2;
+		
+		const tileX = Math.floor((mouseX - centerX) / TILE_SIZE + gameState.player.x);
+		const tileY = Math.floor((mouseY - centerY) / TILE_SIZE + gameState.player.y);
+		
+		return { x: tileX, y: tileY };
+	}
 
 	function handleExplosion(explosionData) {
 		// Visual explosion effect
 		console.log('Explosion at', explosionData.x, explosionData.y);
 		// Update affected tiles
+		// Create temporary lookup for this explosion update
+		const explosionTileMap = new Map();
+		for (const tile of gameState.viewport.tiles) {
+			explosionTileMap.set(`${tile.x},${tile.y}`, tile);
+		}
+		
 		for (const affectedTile of explosionData.affectedTiles) {
-			const tile = gameState.viewport.tiles.find(t => t.x === affectedTile.x && t.y === affectedTile.y);
+			const tile = explosionTileMap.get(`${affectedTile.x},${affectedTile.y}`);
 			if (tile) {
 				tile.revealed = true;
 			}
@@ -249,6 +286,7 @@
 	}
 
 	function startRenderLoop() {
+		setInterval(calcFPS, 1000);
 		function render() {
 			if (ctx && canvas) {
 				renderGame();
@@ -258,7 +296,27 @@
 		render();
 	}
 
+	function calcFPS() {
+		console.log('FPS: ', fps, 'NET:', net);
+		fps = 0;
+		net = 0;
+	}
+
 	function renderGame() {
+		fps++;
+		
+		// Create global tile lookup for performance (O(1) instead of O(n) finds)
+		const tileMap = new Map();
+		const tileSet = new Set();
+		for (const tile of gameState.viewport.tiles) {
+			const key = `${tile.x},${tile.y}`;
+			tileMap.set(key, tile);
+			tileSet.add(key);
+		}
+		
+		// Create spawn point lookup for performance
+		const spawnSet = new Set(gameState.spawnPoints.map(sp => `${sp.x},${sp.y}`));
+		
 		// Clear canvas with minesweeper gray background
 		ctx.fillStyle = COLORS.COVERED;
 		ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -307,10 +365,10 @@
 				if (screenX >= -TILE_SIZE && screenX < canvas.width && 
 					screenY >= -TILE_SIZE && screenY < canvas.height) {
 					
-					// Check if we have a tile at this position
+					// Check if we have a tile at this position (fast O(1) lookup)
 					const tileX = gameState.player.x + x;
 					const tileY = gameState.player.y + y;
-					const hasTile = gameState.viewport.tiles.find(t => t.x === tileX && t.y === tileY);
+					const hasTile = tileSet.has(`${tileX},${tileY}`);
 					
 					if (!hasTile) {
 						// Render unknown/out-of-bounds tile (never clickable)
@@ -328,7 +386,7 @@
 			// Only render tiles that are visible on screen
 			if (screenX >= -TILE_SIZE && screenX < canvas.width && 
 				screenY >= -TILE_SIZE && screenY < canvas.height) {
-				renderTileWithoutFlag(tile, screenX, screenY);
+				renderTileWithoutFlag(tile, screenX, screenY, spawnSet);
 			}
 		}
 		
@@ -358,7 +416,8 @@
 			}
 		}
 		
-		// Render hover outline on top of everything
+		// Calculate and render hover outline on top of everything (integrated in render loop)
+		const hoveredTile = getHoveredTile(lastMouseX, lastMouseY);
 		if (hoveredTile.x !== null && hoveredTile.y !== null && gameState.player) {
 			const screenX = centerX + (hoveredTile.x - gameState.player.x) * TILE_SIZE;
 			const screenY = centerY + (hoveredTile.y - gameState.player.y) * TILE_SIZE;
@@ -414,9 +473,9 @@
 		}
 	}
 	
-	function renderTileWithoutFlag(tile, x, y) {
-		// Check if this is a spawn tile
-		const isSpawnTile = gameState.spawnPoints.some(sp => sp.x === tile.x && sp.y === tile.y);
+	function renderTileWithoutFlag(tile, x, y, spawnSet) {
+		// Check if this is a spawn tile (fast O(1) lookup)
+		const isSpawnTile = spawnSet && spawnSet.has(`${tile.x},${tile.y}`);
 		
 		// Check if this tile is clickable (adjacent to player)
 		const isClickable = gameState.player && 
@@ -663,7 +722,10 @@
 			// Left side info
 			ctx.fillText(`Score: ${gameState.player.score}`, padding, 28);
 			ctx.fillText(`Flags: ${gameState.player.flags}`, padding, 50);
-			ctx.fillText(`Time: ${elapsedTime}s`, padding, 72);
+			ctx.fillText(`Position: (${gameState.player.x}, ${gameState.player.y})`, padding, 72);
+			
+			// Center - 7-segment style timer
+			render7SegmentTimer(elapsedTime, canvas.width / 2, 45);
 			
 			// Right side info
 			ctx.textAlign = 'right';
@@ -672,10 +734,6 @@
 			const statusColor = gameState.player.alive ? '#008000' : '#ff0000';
 			ctx.fillStyle = statusColor;
 			ctx.fillText(`${gameState.player.alive ? 'ALIVE' : 'DEAD'}`, canvas.width - padding, 50);
-			
-			// Position info
-			ctx.fillStyle = '#000000';
-			ctx.fillText(`Position: (${gameState.player.x}, ${gameState.player.y})`, canvas.width - padding, 72);
 		}
 		
 		// Bottom instruction panel
@@ -698,6 +756,112 @@
 		ctx.fillText('WASD/Arrow Keys: Move | Left Click: Flip Tile | Right Click: Flag/Unflag', canvas.width / 2, bottomPanelY + 25);
 		ctx.fillText('Find and flag all mines to win! Yellow player is you.', canvas.width / 2, bottomPanelY + 45);
 	}
+	
+	function render7SegmentTimer(seconds, centerX, centerY) {
+		// Convert seconds to MM:SS format
+		const minutes = Math.floor(seconds / 60);
+		const secs = seconds % 60;
+		const timeString = `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+		
+		// 7-segment display dimensions
+		const digitWidth = 20;
+		const digitHeight = 30;
+		const segmentThickness = 4;
+		const digitSpacing = 5;
+		const colonWidth = 8;
+		const padding = 8;
+		
+		// Calculate total width for centering
+		const totalWidth = (digitWidth * 4) + (digitSpacing * 3) + colonWidth;
+		let currentX = centerX - totalWidth / 2;
+		
+		// Draw dark grey background box
+		const boxWidth = totalWidth + (padding * 2);
+		const boxHeight = digitHeight + (padding * 2);
+		const boxX = centerX - boxWidth / 2;
+		const boxY = centerY - boxHeight / 2;
+		
+		ctx.fillStyle = '#404040';
+		ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+		
+		// Draw inset border
+		ctx.strokeStyle = '#202020';
+		ctx.lineWidth = 1;
+		ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+		
+		// Render each character
+		for (let i = 0; i < timeString.length; i++) {
+			const char = timeString[i];
+			if (char === ':') {
+				render7SegmentColon(currentX, centerY);
+				currentX += colonWidth + digitSpacing;
+			} else {
+				render7SegmentDigit(parseInt(char), currentX, centerY, digitWidth, digitHeight, segmentThickness);
+				currentX += digitWidth + digitSpacing;
+			}
+		}
+	}
+	
+	function render7SegmentDigit(digit, x, y, width, height, thickness) {
+		// 7-segment patterns for digits 0-9
+		const patterns = [
+			[1,1,1,1,1,1,0], // 0
+			[0,1,1,0,0,0,0], // 1
+			[1,1,0,1,1,0,1], // 2
+			[1,1,1,1,0,0,1], // 3
+			[0,1,1,0,0,1,1], // 4
+			[1,0,1,1,0,1,1], // 5
+			[1,0,1,1,1,1,1], // 6
+			[1,1,1,0,0,0,0], // 7
+			[1,1,1,1,1,1,1], // 8
+			[1,1,1,1,0,1,1]  // 9
+		];
+		
+		const pattern = patterns[digit] || [0,0,0,0,0,0,0];
+		const segments = [
+			// [x1, y1, x2, y2] for each segment
+			[x, y - height/2, x + width, y - height/2], // top
+			[x + width, y - height/2, x + width, y], // top right
+			[x + width, y, x + width, y + height/2], // bottom right
+			[x, y + height/2, x + width, y + height/2], // bottom
+			[x, y, x, y + height/2], // bottom left
+			[x, y - height/2, x, y], // top left
+			[x, y, x + width, y] // middle
+		];
+		
+		for (let i = 0; i < 7; i++) {
+			const [x1, y1, x2, y2] = segments[i];
+			
+			// Dark grey background for all segments
+			ctx.strokeStyle = '#404040';
+			ctx.lineWidth = thickness;
+			ctx.beginPath();
+			ctx.moveTo(x1, y1);
+			ctx.lineTo(x2, y2);
+			ctx.stroke();
+			
+			// Red overlay for active segments
+			if (pattern[i]) {
+				ctx.strokeStyle = '#ff0000';
+				ctx.lineWidth = thickness;
+				ctx.beginPath();
+				ctx.moveTo(x1, y1);
+				ctx.lineTo(x2, y2);
+				ctx.stroke();
+			}
+		}
+	}
+	
+	function render7SegmentColon(x, y) {
+		// Draw two dots for the colon
+		ctx.fillStyle = '#ff0000';
+		ctx.beginPath();
+		ctx.arc(x + 2, y - 8, 2, 0, 2 * Math.PI);
+		ctx.fill();
+		ctx.beginPath();
+		ctx.arc(x + 2, y + 8, 2, 0, 2 * Math.PI);
+		ctx.fill();
+	}
 </script>
 
 <div class="game-container">
@@ -706,8 +870,8 @@
 	<div class="leaderboard">
 		<h3>Leaderboard</h3>
 		<div class="leaderboard-content">
-			{#if gameState.viewport.players.length > 0}
-				{@const sortedPlayers = gameState.viewport.players
+			{#if gameState.allPlayers.length > 0}
+				{@const sortedPlayers = gameState.allPlayers
 					.filter(p => p.score > 0)
 					.sort((a, b) => b.score - a.score)}
 				{#each sortedPlayers.slice(0, 10) as player, index}
