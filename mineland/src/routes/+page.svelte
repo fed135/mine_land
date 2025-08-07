@@ -35,11 +35,13 @@
 	let gameState = $state({
 		player: null,
 		viewport: { tiles: [], players: [] },
-		gameInfo: { startTime: 0, ended: false, minesRemaining: 0 }
+		gameInfo: { startTime: 0, ended: false, minesRemaining: 0 },
+		spawnPoints: []
 	});
 
 	// Input handling
 	let pressedKeys = new Set();
+	let hoveredTile = $state({ x: null, y: null });
 
 	onMount(() => {
 		if (canvas) {
@@ -56,6 +58,7 @@
 				window.removeEventListener('keyup', handleKeyUp);
 				canvas.removeEventListener('click', handleCanvasClick);
 				canvas.removeEventListener('contextmenu', handleCanvasRightClick);
+				canvas.removeEventListener('mousemove', handleMouseMove);
 			};
 		}
 	});
@@ -90,6 +93,7 @@
 				gameState.player = data.player;
 				gameState.gameInfo = data.gameState;
 				gameState.viewport = data.viewport;
+				gameState.spawnPoints = data.spawnPoints || [];
 			});
 
 			client.subscribe('viewport-update', (data) => {
@@ -136,7 +140,17 @@
 
 	function sendPlayerAction(action, x, y) {
 		if (client && connected) {
-			client.write('player-action', { action, x, y });
+			// Calculate viewport dimensions in tiles (full screen coverage)
+			const viewportTilesX = Math.ceil(canvas.width / TILE_SIZE);
+			const viewportTilesY = Math.ceil(canvas.height / TILE_SIZE);
+			
+			client.write('player-action', { 
+				action, 
+				x, 
+				y,
+				viewportWidth: Math.min(viewportTilesX, 100),
+				viewportHeight: Math.min(viewportTilesY, 100)
+			});
 		}
 	}
 
@@ -146,6 +160,7 @@
 		window.addEventListener('keyup', handleKeyUp);
 		canvas.addEventListener('click', handleCanvasClick);
 		canvas.addEventListener('contextmenu', handleCanvasRightClick);
+		canvas.addEventListener('mousemove', handleMouseMove);
 	}
 
 	function handleKeyDown(event) {
@@ -171,6 +186,12 @@
 
 	function handleKeyUp(event) {
 		pressedKeys.delete(event.code);
+	}
+	
+	function handleMouseMove(event) {
+		const { x, y } = getClickedTile(event);
+		hoveredTile.x = x;
+		hoveredTile.y = y;
 	}
 
 
@@ -273,9 +294,9 @@
 		const centerX = canvas.width / 2;
 		const centerY = canvas.height / 2;
 		
-		// Calculate visible area bounds
-		const tilesX = Math.ceil(canvas.width / TILE_SIZE) + 2;
-		const tilesY = Math.ceil(canvas.height / TILE_SIZE) + 2;
+		// Calculate visible area bounds - match server viewport calculation
+		const tilesX = Math.min(Math.ceil(canvas.width / TILE_SIZE / 2) + 2, 100);
+		const tilesY = Math.min(Math.ceil(canvas.height / TILE_SIZE / 2) + 2, 100);
 		
 		// Render grid background for empty areas
 		for (let x = -tilesX; x <= tilesX; x++) {
@@ -292,14 +313,14 @@
 					const hasTile = gameState.viewport.tiles.find(t => t.x === tileX && t.y === tileY);
 					
 					if (!hasTile) {
-						// Render unknown/out-of-bounds tile
-						renderCoveredTile(screenX, screenY);
+						// Render unknown/out-of-bounds tile (never clickable)
+						renderCoveredTile(screenX, screenY, false);
 					}
 				}
 			}
 		}
 		
-		// Render actual game tiles
+		// Render actual game tiles (without flags)
 		for (const tile of gameState.viewport.tiles) {
 			const screenX = centerX + (tile.x - gameState.player.x) * TILE_SIZE;
 			const screenY = centerY + (tile.y - gameState.player.y) * TILE_SIZE;
@@ -307,11 +328,11 @@
 			// Only render tiles that are visible on screen
 			if (screenX >= -TILE_SIZE && screenX < canvas.width && 
 				screenY >= -TILE_SIZE && screenY < canvas.height) {
-				renderTile(tile, screenX, screenY);
+				renderTileWithoutFlag(tile, screenX, screenY);
 			}
 		}
 		
-		// Render players on top
+		// Render players on top of tiles
 		for (const player of gameState.viewport.players) {
 			const screenX = centerX + (player.x - gameState.player.x) * TILE_SIZE;
 			const screenY = centerY + (player.y - gameState.player.y) * TILE_SIZE;
@@ -323,11 +344,40 @@
 			}
 		}
 		
+		// Render flags on top of everything
+		for (const tile of gameState.viewport.tiles) {
+			if (tile.flagged) {
+				const screenX = centerX + (tile.x - gameState.player.x) * TILE_SIZE;
+				const screenY = centerY + (tile.y - gameState.player.y) * TILE_SIZE;
+				
+				// Only render flags that are visible on screen
+				if (screenX >= -TILE_SIZE && screenX < canvas.width && 
+					screenY >= -TILE_SIZE && screenY < canvas.height) {
+					renderFlag(screenX, screenY, tile.type === 'mine');
+				}
+			}
+		}
+		
+		// Render hover outline on top of everything
+		if (hoveredTile.x !== null && hoveredTile.y !== null && gameState.player) {
+			const screenX = centerX + (hoveredTile.x - gameState.player.x) * TILE_SIZE;
+			const screenY = centerY + (hoveredTile.y - gameState.player.y) * TILE_SIZE;
+			
+			// Only render hover outline if tile is visible on screen
+			if (screenX >= -TILE_SIZE && screenX < canvas.width && 
+				screenY >= -TILE_SIZE && screenY < canvas.height) {
+				renderHoverOutline(screenX, screenY);
+			}
+		}
+		
 		// Render UI
 		renderUI();
 	}
 
 	function renderTile(tile, x, y) {
+		// Check if this is a spawn tile
+		const isSpawnTile = gameState.spawnPoints.some(sp => sp.x === tile.x && sp.y === tile.y);
+		
 		if (tile.revealed) {
 			// Revealed tile - flat appearance like original minesweeper
 			if (tile.type === 'explosion') {
@@ -348,6 +398,11 @@
 			} else if (tile.type === 'numbered' && tile.number > 0) {
 				renderNumber(x, y, tile.number);
 			}
+			
+			// Spawn tile visual effect - dotted blue circle
+			if (isSpawnTile) {
+				renderSpawnEffect(x, y);
+			}
 		} else {
 			// Covered tile - classic 3D raised appearance
 			renderCoveredTile(x, y);
@@ -359,9 +414,55 @@
 		}
 	}
 	
-	function renderCoveredTile(x, y) {
-		// Main tile color
-		ctx.fillStyle = COLORS.COVERED;
+	function renderTileWithoutFlag(tile, x, y) {
+		// Check if this is a spawn tile
+		const isSpawnTile = gameState.spawnPoints.some(sp => sp.x === tile.x && sp.y === tile.y);
+		
+		// Check if this tile is clickable (adjacent to player)
+		const isClickable = gameState.player && 
+			Math.abs(tile.x - gameState.player.x) <= 1 && 
+			Math.abs(tile.y - gameState.player.y) <= 1 &&
+			!(tile.x === gameState.player.x && tile.y === gameState.player.y);
+		
+		if (tile.revealed) {
+			// Revealed tile - flat appearance like original minesweeper
+			if (tile.type === 'explosion') {
+				ctx.fillStyle = COLORS.EXPLOSION;
+			} else {
+				ctx.fillStyle = COLORS.REVEALED;
+			}
+			ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+			
+			// Simple border for revealed tiles
+			ctx.strokeStyle = COLORS.BORDER_DARK;
+			ctx.lineWidth = 1;
+			ctx.strokeRect(x, y, TILE_SIZE, TILE_SIZE);
+			
+			// Content for revealed tiles
+			if (tile.type === 'mine') {
+				renderMine(x, y, tile.exploded);
+			} else if (tile.type === 'numbered' && tile.number > 0) {
+				renderNumber(x, y, tile.number);
+			}
+			
+			// Spawn tile visual effect - dotted blue circle
+			if (isSpawnTile) {
+				renderSpawnEffect(x, y);
+			}
+		} else {
+			// Covered tile - classic 3D raised appearance with clickable highlight
+			renderCoveredTile(x, y, isClickable);
+		}
+		// No flag rendering - flags are rendered separately on top
+	}
+	
+	function renderCoveredTile(x, y, isClickable = false) {
+		// Main tile color - lighter if clickable
+		if (isClickable) {
+			ctx.fillStyle = '#d4d4d4'; // Slightly lighter than COLORS.COVERED (#c0c0c0)
+		} else {
+			ctx.fillStyle = COLORS.COVERED;
+		}
 		ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
 		
 		// Classic minesweeper 3D effect
@@ -467,6 +568,28 @@
 		ctx.strokeStyle = '#000000';
 		ctx.lineWidth = 1;
 		ctx.stroke();
+	}
+	
+	function renderSpawnEffect(x, y) {
+		const centerX = x + TILE_SIZE / 2;
+		const centerY = y + TILE_SIZE / 2;
+		const radius = TILE_SIZE * 0.3;
+		
+		// Create dotted blue circle
+		ctx.strokeStyle = '#0088ff';
+		ctx.lineWidth = 2;
+		ctx.setLineDash([4, 4]); // Dotted pattern
+		ctx.beginPath();
+		ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+		ctx.stroke();
+		ctx.setLineDash([]); // Reset line dash
+	}
+	
+	function renderHoverOutline(x, y) {
+		// Bright blue outline for hovered tile
+		ctx.strokeStyle = '#0066ff';
+		ctx.lineWidth = 3;
+		ctx.strokeRect(x, y, TILE_SIZE, TILE_SIZE);
 	}
 
 	function renderPlayer(player, x, y, isCurrentPlayer) {
@@ -577,9 +700,45 @@
 	}
 </script>
 
-<canvas bind:this={canvas}></canvas>
+<div class="game-container">
+	<canvas bind:this={canvas}></canvas>
+	
+	<div class="leaderboard">
+		<h3>Leaderboard</h3>
+		<div class="leaderboard-content">
+			{#if gameState.viewport.players.length > 0}
+				{@const sortedPlayers = gameState.viewport.players
+					.filter(p => p.score > 0)
+					.sort((a, b) => b.score - a.score)}
+				{#each sortedPlayers.slice(0, 10) as player, index}
+					<div class="leaderboard-entry" class:current-player={player.id === gameState.player?.id}>
+						<span class="rank">#{index + 1}</span>
+						<span class="name">{player.username}</span>
+						<span class="score">{player.score}</span>
+						{#if !player.alive}
+							<span class="status dead">💀</span>
+						{/if}
+					</div>
+				{/each}
+				{#if sortedPlayers.length === 0}
+					<div class="no-scores">No scores yet</div>
+				{/if}
+			{:else}
+				<div class="loading">Loading...</div>
+			{/if}
+		</div>
+	</div>
+</div>
 
 <style>
+	.game-container {
+		position: relative;
+		width: 100vw;
+		height: 100vh;
+		margin: 0;
+		padding: 0;
+	}
+	
 	canvas {
 		display: block;
 		width: 100vw;
@@ -588,5 +747,84 @@
 		padding: 0;
 		border: none;
 		outline: none;
+	}
+	
+	.leaderboard {
+		position: absolute;
+		top: 20px;
+		right: 20px;
+		width: 250px;
+		background: rgba(192, 192, 192, 0.95);
+		border: 2px solid #808080;
+		border-radius: 4px;
+		font-family: Arial, sans-serif;
+		font-size: 14px;
+		box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.3);
+		z-index: 1000;
+	}
+	
+	.leaderboard h3 {
+		margin: 0;
+		padding: 10px;
+		background: #c0c0c0;
+		border-bottom: 1px solid #808080;
+		text-align: center;
+		font-weight: bold;
+		color: #000;
+	}
+	
+	.leaderboard-content {
+		padding: 10px;
+		max-height: 400px;
+		overflow-y: auto;
+	}
+	
+	.leaderboard-entry {
+		display: flex;
+		align-items: center;
+		padding: 6px 8px;
+		margin-bottom: 4px;
+		background: #ffffff;
+		border: 1px solid #c0c0c0;
+		border-radius: 2px;
+	}
+	
+	.leaderboard-entry.current-player {
+		background: #ffff99;
+		border-color: #ffaa00;
+		font-weight: bold;
+	}
+	
+	.rank {
+		font-weight: bold;
+		min-width: 30px;
+		color: #0066cc;
+	}
+	
+	.name {
+		flex-grow: 1;
+		margin-left: 8px;
+		color: #000;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	
+	.score {
+		font-weight: bold;
+		color: #008000;
+		margin-left: 8px;
+	}
+	
+	.status.dead {
+		margin-left: 4px;
+		font-size: 12px;
+	}
+	
+	.no-scores, .loading {
+		text-align: center;
+		color: #666;
+		padding: 20px;
+		font-style: italic;
 	}
 </style>

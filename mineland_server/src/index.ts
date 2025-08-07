@@ -6,7 +6,7 @@ import ws from '@kalm/ws';
 const WORLD_SIZE = 1000;
 const SPAWN_POINTS = 10;
 const VIEWPORT_RADIUS = 5;
-const MINE_COUNT = Math.floor(WORLD_SIZE * WORLD_SIZE * 0.005); // 3% mine density
+const MINE_COUNT = Math.floor(WORLD_SIZE * WORLD_SIZE * 0.05); // 5% mine density
 
 // Tile types
 const TileType = {
@@ -65,12 +65,15 @@ interface WelcomePayload {
     tiles: (Tile & { x: number; y: number })[];
     players: Player[];
   };
+  spawnPoints: { x: number; y: number }[];
 }
 
 interface PlayerActionPayload {
   x: number;
   y: number;
   action: 'move' | 'flip' | 'flag' | 'unflag';
+  viewportWidth?: number;
+  viewportHeight?: number;
 }
 
 interface ViewportUpdatePayload {
@@ -191,11 +194,18 @@ function initializeGame() {
 }
 
 // Viewport and tile management functions
-function getViewport(playerX: number, playerY: number): (Tile & { x: number; y: number })[] {
+function getViewport(playerX: number, playerY: number, viewportWidth?: number, viewportHeight?: number): (Tile & { x: number; y: number })[] {
   const tiles: (Tile & { x: number; y: number })[] = [];
   
-  for (let x = playerX - VIEWPORT_RADIUS; x <= playerX + VIEWPORT_RADIUS; x++) {
-    for (let y = playerY - VIEWPORT_RADIUS; y <= playerY + VIEWPORT_RADIUS; y++) {
+  // Calculate dynamic viewport size based on client screen or use defaults
+  const defaultTilesX = Math.min(50, 100); // Default viewport (full screen)
+  const defaultTilesY = Math.min(40, 100);
+  
+  const tilesX = viewportWidth ? Math.min(viewportWidth, 100) : defaultTilesX;
+  const tilesY = viewportHeight ? Math.min(viewportHeight, 100) : defaultTilesY;
+  
+  for (let x = playerX - tilesX; x <= playerX + tilesX; x++) {
+    for (let y = playerY - tilesY; y <= playerY + tilesY; y++) {
       if (x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE) {
         tiles.push({ ...gameState.world[x][y], x, y });
       }
@@ -205,12 +215,20 @@ function getViewport(playerX: number, playerY: number): (Tile & { x: number; y: 
   return tiles;
 }
 
-function getPlayersInViewport(playerX: number, playerY: number): Player[] {
+function getPlayersInViewport(playerX: number, playerY: number, viewportWidth?: number, viewportHeight?: number): Player[] {
   const playersInView: Player[] = [];
   
+  // Calculate dynamic viewport size based on client screen or use defaults
+  // Default to reasonable viewport assuming standard screen sizes
+  const defaultTilesX = Math.min(50, 100); // Full screen coverage
+  const defaultTilesY = Math.min(40, 100); // Full screen coverage
+  
+  const tilesX = viewportWidth ? Math.min(viewportWidth, 100) : defaultTilesX;
+  const tilesY = viewportHeight ? Math.min(viewportHeight, 100) : defaultTilesY;
+  
   for (const player of gameState.players.values()) {
-    if (Math.abs(player.x - playerX) <= VIEWPORT_RADIUS && 
-        Math.abs(player.y - playerY) <= VIEWPORT_RADIUS) {
+    if (Math.abs(player.x - playerX) <= tilesX && 
+        Math.abs(player.y - playerY) <= tilesY) {
       playersInView.push(player);
     }
   }
@@ -394,7 +412,8 @@ server.on('connection', (client: any) => {
     viewport: {
       tiles: getViewport(player.x, player.y),
       players: getPlayersInViewport(player.x, player.y)
-    }
+    },
+    spawnPoints: gameState.spawnPoints
   };
   client.write('welcome', welcomePayload);
   
@@ -430,8 +449,8 @@ server.on('connection', (client: any) => {
     if (actionSuccess) {
       // Send updated viewport to player
       const viewportUpdate: ViewportUpdatePayload = {
-        tiles: getViewport(player.x, player.y),
-        players: getPlayersInViewport(player.x, player.y)
+        tiles: getViewport(player.x, player.y, data.viewportWidth, data.viewportHeight),
+        players: getPlayersInViewport(player.x, player.y, data.viewportWidth, data.viewportHeight)
       };
       client.write('viewport-update', viewportUpdate);
       
