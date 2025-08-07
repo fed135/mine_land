@@ -1,5 +1,9 @@
 # Mine Land - Project Overview
 
+## Game Specification
+**Game Rules:** `./GAME_RULES.md`  
+Complete specification of Mine Land game mechanics, rules, and multiplayer features.
+
 ## Project Structure
 This project consists of two main components:
 
