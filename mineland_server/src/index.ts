@@ -366,25 +366,25 @@ function checkGameEnd(): boolean {
 initializeGame();
 
 server.on('connection', (client: any) => {
-  console.log(`Client connected: ${client.id}`);
+  console.log(`Client connected: ${client.label}`);
   
   const spawnPoint = getRandomSpawnPoint();
   const player: Player = {
-    id: client.id,
+    id: client.label,
     x: spawnPoint.x,
     y: spawnPoint.y,
-    username: `Player${client.id.substring(0, 6)}`,
+    username: `Player${client.label.substring(0, 6)}`,
     score: 0,
     flags: 3,
     alive: true,
     connected: true
   };
   
-  gameState.players.set(client.id, player);
+  gameState.players.set(client.label, player);
   
   // Send welcome message and current game state
   const welcomePayload: WelcomePayload = {
-    playerId: client.id,
+    playerId: client.label,
     player: player,
     gameState: {
       startTime: gameState.gameStartTime,
@@ -403,7 +403,7 @@ server.on('connection', (client: any) => {
   
   // Handle player actions
   client.subscribe('player-action', (data: PlayerActionPayload) => {
-    const player = gameState.players.get(client.id);
+    const player = gameState.players.get(client.label);
     if (!player || !player.alive || gameState.gameEnded) return;
     
     let actionSuccess = false;
@@ -417,13 +417,13 @@ server.on('connection', (client: any) => {
         }
         break;
       case 'flip':
-        actionSuccess = handleTileFlip(client.id, data.x, data.y);
+        actionSuccess = handleTileFlip(client.label, data.x, data.y);
         break;
       case 'flag':
-        actionSuccess = handleTileFlag(client.id, data.x, data.y);
+        actionSuccess = handleTileFlag(client.label, data.x, data.y);
         break;
       case 'unflag':
-        actionSuccess = handleTileUnflag(client.id, data.x, data.y);
+        actionSuccess = handleTileUnflag(client.label, data.x, data.y);
         break;
     }
     
@@ -457,12 +457,12 @@ server.on('connection', (client: any) => {
   
   // Handle client disconnect
   client.on('disconnect', () => {
-    console.log(`Client disconnected: ${client.id}`);
+    console.log(`Client disconnected: ${client.label}`);
     
-    const player = gameState.players.get(client.id);
+    const player = gameState.players.get(client.label);
     if (player) {
       player.connected = false;
-      server.broadcast('player-disconnected', { playerId: client.id });
+      server.broadcast('player-disconnected', { playerId: client.label });
     }
   });
 });

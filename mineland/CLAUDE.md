@@ -45,7 +45,16 @@ This is a SvelteKit web application called "Mine Land" that features a full-scre
 - Canvas API support required
 - Responsive design compatibility
 
+## Dependencies
+- **kalm:** ^8.0.0 - WebSocket framework for real-time communication
+- **@kalm/ws:** ^8.0.0 - WebSocket transport for Kalm
+
+## Networking
+- Uses Kalm framework for WebSocket communication with game server
+- Connects to `ws://localhost:8080` for real-time multiplayer
+- 60hz client-side tick rate matching server
+
 ## Commands
 - `npm run dev` - Start development server
-- `npm run build` - Build for production
+- `npm run build` - Build for production  
 - `npm run preview` - Preview production build
