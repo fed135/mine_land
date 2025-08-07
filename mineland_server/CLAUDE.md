@@ -7,6 +7,7 @@ WebSocket server component for the Mine Land application using the Kalm framewor
 - **Runtime:** Node.js with TypeScript (ES modules)
 - **WebSocket Framework:** Kalm v8.0.0 with @kalm/ws
 - **Package Manager:** npm
+- **Database**: In-memory object (process)
 
 ## Dependencies
 - **kalm:** ^8.0.0 - WebSocket framework

@@ -7,12 +7,17 @@
   "scripts": {
     "start": "node src/index.ts"
   },
-  "keywords": ["websocket", "kalm", "typescript", "mineland"],
+  "keywords": [
+    "websocket",
+    "kalm",
+    "typescript",
+    "mineland"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "kalm": "^8.0.0",
-    "@kalm/ws": "^8.0.0"
+    "@kalm/ws": "^8.0.0",
+    "kalm": "^8.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

@@ -1,31 +1,240 @@
+// @ts-check
 import { listen, routines } from 'kalm';
 import ws from '@kalm/ws';
 
+// Game constants
+const WORLD_SIZE = 1000;
+const SPAWN_POINTS = 10;
+const VIEWPORT_RADIUS = 5;
+const MINE_COUNT = Math.floor(WORLD_SIZE * WORLD_SIZE * 0.15); // 15% mine density
+
+// Tile types
+const TileType = {
+  COVERED: 'covered',
+  EMPTY: 'empty',
+  NUMBERED: 'numbered',
+  MINE: 'mine',
+  FLAG: 'flag',
+  EXPLOSION: 'explosion'
+} as const;
+
+type TileType = typeof TileType[keyof typeof TileType];
+
+// Tile state
+interface Tile {
+  type: TileType;
+  revealed: boolean;
+  flagged: boolean;
+  flaggedBy?: string;
+  number?: number; // For numbered tiles (1-8)
+  exploded?: boolean;
+}
+
+// Player state
 interface Player {
   id: string;
   x: number;
   y: number;
-  username?: string;
+  username: string;
+  score: number;
+  flags: number;
+  alive: boolean;
+  connected: boolean;
 }
 
+// Game state
+interface GameState {
+  world: Tile[][];
+  spawnPoints: { x: number; y: number }[];
+  players: Map<string, Player>;
+  gameStartTime: number;
+  gameEnded: boolean;
+  minesRemaining: number;
+}
+
+// Message payloads
 interface WelcomePayload {
-  message: string;
   playerId: string;
   player: Player;
-  currentPlayers: Player[];
+  gameState: {
+    startTime: number;
+    ended: boolean;
+    minesRemaining: number;
+  };
+  viewport: {
+    tiles: (Tile & { x: number; y: number })[];
+    players: Player[];
+  };
 }
 
-interface PlayerUpdatePayload {
-  x?: number;
-  y?: number;
-  username?: string;
+interface PlayerActionPayload {
+  x: number;
+  y: number;
+  action: 'move' | 'flip' | 'flag' | 'unflag';
 }
 
-interface ChatMessagePayload {
-  message: string;
+interface ViewportUpdatePayload {
+  tiles: (Tile & { x: number; y: number })[];
+  players: Player[];
 }
 
-const players = new Map<string, Player>();
+// World generation functions
+function generateSpawnPoints(): { x: number; y: number }[] {
+  const spawnPoints: { x: number; y: number }[] = [];
+  const spacing = Math.floor(WORLD_SIZE / Math.sqrt(SPAWN_POINTS));
+  
+  for (let i = 0; i < SPAWN_POINTS; i++) {
+    const row = Math.floor(i / Math.sqrt(SPAWN_POINTS));
+    const col = i % Math.ceil(Math.sqrt(SPAWN_POINTS));
+    
+    spawnPoints.push({
+      x: Math.floor(col * spacing + spacing / 2),
+      y: Math.floor(row * spacing + spacing / 2)
+    });
+  }
+  
+  return spawnPoints;
+}
+
+function generateWorld(spawnPoints: { x: number; y: number }[]): Tile[][] {
+  // Initialize empty world
+  const world: Tile[][] = [];
+  for (let x = 0; x < WORLD_SIZE; x++) {
+    world[x] = [];
+    for (let y = 0; y < WORLD_SIZE; y++) {
+      world[x][y] = {
+        type: TileType.COVERED,
+        revealed: false,
+        flagged: false
+      };
+    }
+  }
+  
+  // Reveal spawn points
+  for (const spawn of spawnPoints) {
+    if (spawn.x >= 0 && spawn.x < WORLD_SIZE && spawn.y >= 0 && spawn.y < WORLD_SIZE) {
+      world[spawn.x][spawn.y] = {
+        type: TileType.EMPTY,
+        revealed: true,
+        flagged: false
+      };
+    }
+  }
+  
+  // Place mines randomly (avoiding spawn points)
+  const spawnSet = new Set(spawnPoints.map(s => `${s.x},${s.y}`));
+  let minesPlaced = 0;
+  
+  while (minesPlaced < MINE_COUNT) {
+    const x = Math.floor(Math.random() * WORLD_SIZE);
+    const y = Math.floor(Math.random() * WORLD_SIZE);
+    const key = `${x},${y}`;
+    
+    if (!spawnSet.has(key) && world[x][y].type !== TileType.MINE) {
+      world[x][y].type = TileType.MINE;
+      minesPlaced++;
+    }
+  }
+  
+  // Calculate numbers for non-mine tiles
+  for (let x = 0; x < WORLD_SIZE; x++) {
+    for (let y = 0; y < WORLD_SIZE; y++) {
+      if (world[x][y].type !== TileType.MINE) {
+        const mineCount = countAdjacentMines(world, x, y);
+        if (mineCount > 0) {
+          world[x][y].type = TileType.NUMBERED;
+          world[x][y].number = mineCount;
+        } else if (!spawnSet.has(`${x},${y}`)) {
+          world[x][y].type = TileType.EMPTY;
+        }
+      }
+    }
+  }
+  
+  return world;
+}
+
+function countAdjacentMines(world: Tile[][], x: number, y: number): number {
+  let count = 0;
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx >= 0 && nx < WORLD_SIZE && ny >= 0 && ny < WORLD_SIZE) {
+        if (world[nx][ny].type === TileType.MINE) {
+          count++;
+        }
+      }
+    }
+  }
+  return count;
+}
+
+// Game state
+const gameState: GameState = {
+  world: [],
+  spawnPoints: [],
+  players: new Map<string, Player>(),
+  gameStartTime: Date.now(),
+  gameEnded: false,
+  minesRemaining: MINE_COUNT
+};
+
+// Initialize world
+function initializeGame() {
+  gameState.spawnPoints = generateSpawnPoints();
+  gameState.world = generateWorld(gameState.spawnPoints);
+  gameState.gameStartTime = Date.now();
+  gameState.minesRemaining = MINE_COUNT;
+  console.log(`World generated: ${WORLD_SIZE}x${WORLD_SIZE} with ${MINE_COUNT} mines and ${SPAWN_POINTS} spawn points`);
+}
+
+// Viewport and tile management functions
+function getViewport(playerX: number, playerY: number): (Tile & { x: number; y: number })[] {
+  const tiles: (Tile & { x: number; y: number })[] = [];
+  
+  for (let x = playerX - VIEWPORT_RADIUS; x <= playerX + VIEWPORT_RADIUS; x++) {
+    for (let y = playerY - VIEWPORT_RADIUS; y <= playerY + VIEWPORT_RADIUS; y++) {
+      if (x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE) {
+        tiles.push({ ...gameState.world[x][y], x, y });
+      }
+    }
+  }
+  
+  return tiles;
+}
+
+function getPlayersInViewport(playerX: number, playerY: number): Player[] {
+  const playersInView: Player[] = [];
+  
+  for (const player of gameState.players.values()) {
+    if (Math.abs(player.x - playerX) <= VIEWPORT_RADIUS && 
+        Math.abs(player.y - playerY) <= VIEWPORT_RADIUS) {
+      playersInView.push(player);
+    }
+  }
+  
+  return playersInView;
+}
+
+function isAdjacent(x1: number, y1: number, x2: number, y2: number): boolean {
+  return Math.abs(x1 - x2) <= 1 && Math.abs(y1 - y2) <= 1 && !(x1 === x2 && y1 === y2);
+}
+
+function isValidPosition(x: number, y: number): boolean {
+  return x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE;
+}
+
+function isTileWalkable(x: number, y: number): boolean {
+  if (!isValidPosition(x, y)) return false;
+  const tile = gameState.world[x][y];
+  return tile.revealed || tile.flagged;
+}
+
+function getRandomSpawnPoint(): { x: number; y: number } {
+  return gameState.spawnPoints[Math.floor(Math.random() * gameState.spawnPoints.length)];
+}
 
 const server = listen({
   port: 8080,
@@ -34,77 +243,226 @@ const server = listen({
   host: '0.0.0.0',
 });
 
+// Game logic functions
+function handleTileFlip(playerId: string, x: number, y: number): boolean {
+  const player = gameState.players.get(playerId);
+  if (!player || !player.alive || gameState.gameEnded) return false;
+  
+  if (!isValidPosition(x, y) || !isAdjacent(player.x, player.y, x, y)) return false;
+  
+  const tile = gameState.world[x][y];
+  if (tile.revealed || tile.flagged) return false;
+  
+  // Reveal tile
+  tile.revealed = true;
+  player.score += 1;
+  
+  if (tile.type === TileType.MINE) {
+    // Explosion!
+    handleExplosion(x, y);
+    return true;
+  }
+  
+  return true;
+}
+
+function handleTileFlag(playerId: string, x: number, y: number): boolean {
+  const player = gameState.players.get(playerId);
+  if (!player || !player.alive || gameState.gameEnded || player.flags <= 0) return false;
+  
+  if (!isValidPosition(x, y) || !isAdjacent(player.x, player.y, x, y)) return false;
+  
+  const tile = gameState.world[x][y];
+  if (tile.revealed || tile.flagged) return false;
+  
+  // Place flag
+  tile.flagged = true;
+  tile.flaggedBy = playerId;
+  player.flags -= 1;
+  
+  if (tile.type === TileType.MINE) {
+    player.score += 3; // Bonus for flagging mine
+    gameState.minesRemaining -= 1;
+  }
+  
+  return true;
+}
+
+function handleTileUnflag(playerId: string, x: number, y: number): boolean {
+  const player = gameState.players.get(playerId);
+  if (!player || !player.alive || gameState.gameEnded) return false;
+  
+  if (!isValidPosition(x, y) || !isAdjacent(player.x, player.y, x, y)) return false;
+  
+  const tile = gameState.world[x][y];
+  if (!tile.flagged) return false;
+  
+  // Remove flag
+  tile.flagged = false;
+  player.flags += 1;
+  
+  if (tile.type === TileType.MINE) {
+    gameState.minesRemaining += 1;
+  }
+  
+  tile.flaggedBy = undefined;
+  return true;
+}
+
+function handleExplosion(x: number, y: number) {
+  const affectedTiles: { x: number; y: number }[] = [];
+  const killedPlayers: string[] = [];
+  
+  // 3-tile radius explosion
+  for (let dx = -3; dx <= 3; dx++) {
+    for (let dy = -3; dy <= 3; dy++) {
+      if (dx * dx + dy * dy <= 9) { // Circular radius
+        const nx = x + dx;
+        const ny = y + dy;
+        
+        if (isValidPosition(nx, ny)) {
+          const tile = gameState.world[nx][ny];
+          if (!tile.revealed) {
+            tile.revealed = true;
+            affectedTiles.push({ x: nx, y: ny });
+            
+            // Chain reactions
+            if (tile.type === TileType.MINE && !tile.exploded) {
+              tile.exploded = true;
+              setTimeout(() => handleExplosion(nx, ny), 100);
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  // Kill players in explosion radius
+  for (const player of gameState.players.values()) {
+    const dist = Math.sqrt((player.x - x) ** 2 + (player.y - y) ** 2);
+    if (dist <= 3 && player.alive) {
+      player.alive = false;
+      killedPlayers.push(player.id);
+    }
+  }
+  
+  // Mark explosion site
+  gameState.world[x][y].type = TileType.EXPLOSION;
+  gameState.world[x][y].exploded = true;
+  
+  // Broadcast explosion
+  server.broadcast('explosion', {
+    x, y,
+    affectedTiles,
+    killedPlayers
+  });
+}
+
+function checkGameEnd(): boolean {
+  return gameState.minesRemaining <= 0;
+}
+
+// Initialize the game
+initializeGame();
+
 server.on('connection', (client: any) => {
   console.log(`Client connected: ${client.id}`);
   
+  const spawnPoint = getRandomSpawnPoint();
   const player: Player = {
     id: client.id,
-    x: Math.random() * 800,
-    y: Math.random() * 600,
-    username: undefined
+    x: spawnPoint.x,
+    y: spawnPoint.y,
+    username: `Player${client.id.substring(0, 6)}`,
+    score: 0,
+    flags: 3,
+    alive: true,
+    connected: true
   };
   
-  players.set(client.id, player);
+  gameState.players.set(client.id, player);
   
   // Send welcome message and current game state
   const welcomePayload: WelcomePayload = {
-    message: 'Welcome to Mine Land!',
     playerId: client.id,
     player: player,
-    currentPlayers: Array.from(players.values())
+    gameState: {
+      startTime: gameState.gameStartTime,
+      ended: gameState.gameEnded,
+      minesRemaining: gameState.minesRemaining
+    },
+    viewport: {
+      tiles: getViewport(player.x, player.y),
+      players: getPlayersInViewport(player.x, player.y)
+    }
   };
   client.write('welcome', welcomePayload);
   
   // Notify other clients about new player
   server.broadcast('player-joined', { player });
   
-  // Handle player movement updates
-  client.subscribe('player-update', (data: PlayerUpdatePayload) => {
-    const player = players.get(client.id);
-    if (player) {
-      if (typeof data.x === 'number') player.x = data.x;
-      if (typeof data.y === 'number') player.y = data.y;
-      if (data.username) player.username = data.username;
+  // Handle player actions
+  client.subscribe('player-action', (data: PlayerActionPayload) => {
+    const player = gameState.players.get(client.id);
+    if (!player || !player.alive || gameState.gameEnded) return;
+    
+    let actionSuccess = false;
+    
+    switch (data.action) {
+      case 'move':
+        if (isAdjacent(player.x, player.y, data.x, data.y) && isTileWalkable(data.x, data.y)) {
+          player.x = data.x;
+          player.y = data.y;
+          actionSuccess = true;
+        }
+        break;
+      case 'flip':
+        actionSuccess = handleTileFlip(client.id, data.x, data.y);
+        break;
+      case 'flag':
+        actionSuccess = handleTileFlag(client.id, data.x, data.y);
+        break;
+      case 'unflag':
+        actionSuccess = handleTileUnflag(client.id, data.x, data.y);
+        break;
+    }
+    
+    if (actionSuccess) {
+      // Send updated viewport to player
+      const viewportUpdate: ViewportUpdatePayload = {
+        tiles: getViewport(player.x, player.y),
+        players: getPlayersInViewport(player.x, player.y)
+      };
+      client.write('viewport-update', viewportUpdate);
       
-      // Broadcast movement to all clients
-      server.broadcast('player-moved', {
-        playerId: client.id,
-        x: player.x,
-        y: player.y,
-        username: player.username
+      // Broadcast player state changes
+      server.broadcast('player-update', {
+        player: player,
+        action: data.action,
+        x: data.x,
+        y: data.y
       });
+      
+      // Check for game end
+      if (checkGameEnd() && !gameState.gameEnded) {
+        gameState.gameEnded = true;
+        const leaderboard = Array.from(gameState.players.values())
+          .filter(p => p.score > 0)
+          .sort((a, b) => b.score - a.score);
+        
+        server.broadcast('game-end', { leaderboard });
+      }
     }
-  });
-  
-  // Handle chat messages
-  client.subscribe('chat-message', (data: ChatMessagePayload) => {
-    const player = players.get(client.id);
-    if (player && data.message && typeof data.message === 'string') {
-      server.broadcast('chat-message', {
-        playerId: client.id,
-        username: player.username || `Player ${client.id.substring(0, 8)}`,
-        message: data.message.substring(0, 200), // Limit message length
-        timestamp: Date.now()
-      });
-    }
-  });
-  
-  // Handle ping for connection testing
-  client.subscribe('ping', () => {
-    client.write('pong', { timestamp: Date.now() });
   });
   
   // Handle client disconnect
   client.on('disconnect', () => {
     console.log(`Client disconnected: ${client.id}`);
     
-    if (players.has(client.id)) {
-      players.delete(client.id);
-      
-      // Notify other clients about player leaving
-      server.broadcast('player-left', {
-        playerId: client.id
-      });
+    const player = gameState.players.get(client.id);
+    if (player) {
+      player.connected = false;
+      server.broadcast('player-disconnected', { playerId: client.id });
     }
   });
 });
@@ -113,7 +471,10 @@ console.log('Starting Mine Land server on ws://localhost:8080');
 console.log('Server configuration:');
 console.log('- Transport: WebSocket');
 console.log('- Tick rate: 60hz');
-console.log('- Max players: Unlimited');
+console.log('- World size: 1000x1000');
+console.log('- Mine count: ' + MINE_COUNT);
+console.log('- Spawn points: ' + SPAWN_POINTS);
+console.log('- Viewport radius: ' + VIEWPORT_RADIUS);
 
 // Graceful shutdown handling
 process.on('SIGINT', () => {

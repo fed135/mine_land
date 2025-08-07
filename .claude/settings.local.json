@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "mcp__brave_web_search__brave_web_search",
-      "mcp__math_formulas__pi_calc"
+      "mcp__math_formulas__pi_calc",
+      "Bash(npm start)",
+      "Bash(npm run start:*)"
     ],
     "deny": []
   }
