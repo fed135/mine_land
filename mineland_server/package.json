@@ -1,0 +1,21 @@
+{
+  "name": "mineland-server",
+  "version": "1.0.0",
+  "description": "WebSocket server for Mine Land using Kalm framework",
+  "main": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.ts"
+  },
+  "keywords": ["websocket", "kalm", "typescript", "mineland"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "kalm": "^8.0.0",
+    "@kalm/ws": "^8.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}
