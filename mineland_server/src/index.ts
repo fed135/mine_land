@@ -6,7 +6,7 @@ import ws from '@kalm/ws';
 const WORLD_SIZE = 1000;
 const SPAWN_POINTS = 10;
 const VIEWPORT_RADIUS = 5;
-const MINE_COUNT = Math.floor(WORLD_SIZE * WORLD_SIZE * 0.15); // 15% mine density
+const MINE_COUNT = Math.floor(WORLD_SIZE * WORLD_SIZE * 0.005); // 3% mine density
 
 // Tile types
 const TileType = {

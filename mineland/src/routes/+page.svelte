@@ -4,8 +4,29 @@
 	import ws from '@kalm/ws';
 
 	// Game constants
-	const TILE_SIZE = 40;
+	const TILE_SIZE = 32;
 	const SERVER_URL = 'ws://localhost:8080';
+	
+	// Minesweeper colors
+	const COLORS = {
+		COVERED: '#c0c0c0',
+		REVEALED: '#ffffff',
+		MINE: '#ff0000',
+		EXPLOSION: '#ff4400',
+		BORDER_LIGHT: '#ffffff',
+		BORDER_DARK: '#808080',
+		BORDER_DARKEST: '#404040',
+		NUMBERS: [
+			'#0000ff', // 1 - Blue
+			'#008000', // 2 - Green  
+			'#ff0000', // 3 - Red
+			'#000080', // 4 - Dark Blue
+			'#800000', // 5 - Maroon
+			'#008080', // 6 - Teal
+			'#000000', // 7 - Black
+			'#808080'  // 8 - Gray
+		]
+	};
 
 	// Game state
 	let canvas = $state();
@@ -215,36 +236,89 @@
 	}
 
 	function renderGame() {
-		// Clear canvas
-		ctx.fillStyle = '#2a2a2a';
+		// Clear canvas with minesweeper gray background
+		ctx.fillStyle = COLORS.COVERED;
 		ctx.fillRect(0, 0, canvas.width, canvas.height);
 		
 		if (!gameState.player) {
-			// Show connection status
-			ctx.fillStyle = connected ? '#00ff00' : '#ff0000';
-			ctx.font = '24px Arial';
+			// Show connection status with minesweeper styling
+			const statusText = connected ? 'Connected to Mine Land' : 'Connecting...';
+			
+			// Background panel
+			const panelWidth = 400;
+			const panelHeight = 80;
+			const panelX = (canvas.width - panelWidth) / 2;
+			const panelY = (canvas.height - panelHeight) / 2;
+			
+			// Panel background
+			ctx.fillStyle = COLORS.COVERED;
+			ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+			
+			// Panel borders (3D effect)
+			ctx.strokeStyle = COLORS.BORDER_DARK;
+			ctx.lineWidth = 2;
+			ctx.strokeRect(panelX, panelY, panelWidth, panelHeight);
+			
+			// Status text
+			ctx.fillStyle = connected ? '#008000' : '#800000';
+			ctx.font = 'bold 24px Arial';
 			ctx.textAlign = 'center';
-			ctx.fillText(connected ? 'Connected to Mine Land' : 'Connecting...', canvas.width / 2, canvas.height / 2);
+			ctx.textBaseline = 'middle';
+			ctx.fillText(statusText, canvas.width / 2, canvas.height / 2);
 			return;
 		}
 		
 		const centerX = canvas.width / 2;
 		const centerY = canvas.height / 2;
 		
-		// Render tiles
+		// Calculate visible area bounds
+		const tilesX = Math.ceil(canvas.width / TILE_SIZE) + 2;
+		const tilesY = Math.ceil(canvas.height / TILE_SIZE) + 2;
+		
+		// Render grid background for empty areas
+		for (let x = -tilesX; x <= tilesX; x++) {
+			for (let y = -tilesY; y <= tilesY; y++) {
+				const screenX = centerX + x * TILE_SIZE;
+				const screenY = centerY + y * TILE_SIZE;
+				
+				if (screenX >= -TILE_SIZE && screenX < canvas.width && 
+					screenY >= -TILE_SIZE && screenY < canvas.height) {
+					
+					// Check if we have a tile at this position
+					const tileX = gameState.player.x + x;
+					const tileY = gameState.player.y + y;
+					const hasTile = gameState.viewport.tiles.find(t => t.x === tileX && t.y === tileY);
+					
+					if (!hasTile) {
+						// Render unknown/out-of-bounds tile
+						renderCoveredTile(screenX, screenY);
+					}
+				}
+			}
+		}
+		
+		// Render actual game tiles
 		for (const tile of gameState.viewport.tiles) {
 			const screenX = centerX + (tile.x - gameState.player.x) * TILE_SIZE;
 			const screenY = centerY + (tile.y - gameState.player.y) * TILE_SIZE;
 			
-			renderTile(tile, screenX, screenY);
+			// Only render tiles that are visible on screen
+			if (screenX >= -TILE_SIZE && screenX < canvas.width && 
+				screenY >= -TILE_SIZE && screenY < canvas.height) {
+				renderTile(tile, screenX, screenY);
+			}
 		}
 		
-		// Render players
+		// Render players on top
 		for (const player of gameState.viewport.players) {
 			const screenX = centerX + (player.x - gameState.player.x) * TILE_SIZE;
 			const screenY = centerY + (player.y - gameState.player.y) * TILE_SIZE;
 			
-			renderPlayer(player, screenX, screenY, player.id === gameState.player.id);
+			// Only render players that are visible on screen
+			if (screenX >= -TILE_SIZE && screenX < canvas.width && 
+				screenY >= -TILE_SIZE && screenY < canvas.height) {
+				renderPlayer(player, screenX, screenY, player.id === gameState.player.id);
+			}
 		}
 		
 		// Render UI
@@ -252,98 +326,252 @@
 	}
 
 	function renderTile(tile, x, y) {
-		// Tile background
 		if (tile.revealed) {
-			if (tile.type === 'mine') {
-				ctx.fillStyle = '#ff4444';
-			} else if (tile.type === 'explosion') {
-				ctx.fillStyle = '#ff8800';
-			} else if (tile.type === 'numbered') {
-				ctx.fillStyle = '#dddddd';
+			// Revealed tile - flat appearance like original minesweeper
+			if (tile.type === 'explosion') {
+				ctx.fillStyle = COLORS.EXPLOSION;
 			} else {
-				ctx.fillStyle = '#ffffff';
+				ctx.fillStyle = COLORS.REVEALED;
+			}
+			ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+			
+			// Simple border for revealed tiles
+			ctx.strokeStyle = COLORS.BORDER_DARK;
+			ctx.lineWidth = 1;
+			ctx.strokeRect(x, y, TILE_SIZE, TILE_SIZE);
+			
+			// Content for revealed tiles
+			if (tile.type === 'mine') {
+				renderMine(x, y, tile.exploded);
+			} else if (tile.type === 'numbered' && tile.number > 0) {
+				renderNumber(x, y, tile.number);
 			}
 		} else {
-			ctx.fillStyle = '#666666';
+			// Covered tile - classic 3D raised appearance
+			renderCoveredTile(x, y);
 		}
 		
+		// Flag overlay (can be on covered or revealed tiles)
+		if (tile.flagged) {
+			renderFlag(x, y, tile.type === 'mine');
+		}
+	}
+	
+	function renderCoveredTile(x, y) {
+		// Main tile color
+		ctx.fillStyle = COLORS.COVERED;
 		ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
 		
-		// Tile border
-		ctx.strokeStyle = '#333333';
+		// Classic minesweeper 3D effect
+		// Top and left highlights
+		ctx.strokeStyle = COLORS.BORDER_LIGHT;
+		ctx.lineWidth = 2;
+		ctx.beginPath();
+		ctx.moveTo(x, y + TILE_SIZE);
+		ctx.lineTo(x, y);
+		ctx.lineTo(x + TILE_SIZE, y);
+		ctx.stroke();
+		
+		// Bottom and right shadows
+		ctx.strokeStyle = COLORS.BORDER_DARK;
+		ctx.lineWidth = 2;
+		ctx.beginPath();
+		ctx.moveTo(x + TILE_SIZE, y);
+		ctx.lineTo(x + TILE_SIZE, y + TILE_SIZE);
+		ctx.lineTo(x, y + TILE_SIZE);
+		ctx.stroke();
+		
+		// Darker inner shadow
+		ctx.strokeStyle = COLORS.BORDER_DARKEST;
 		ctx.lineWidth = 1;
-		ctx.strokeRect(x, y, TILE_SIZE, TILE_SIZE);
+		ctx.beginPath();
+		ctx.moveTo(x + TILE_SIZE - 1, y + 1);
+		ctx.lineTo(x + TILE_SIZE - 1, y + TILE_SIZE - 1);
+		ctx.lineTo(x + 1, y + TILE_SIZE - 1);
+		ctx.stroke();
+	}
+	
+	function renderMine(x, y, exploded = false) {
+		const centerX = x + TILE_SIZE / 2;
+		const centerY = y + TILE_SIZE / 2;
+		const radius = TILE_SIZE * 0.3;
 		
-		// Tile content
-		ctx.fillStyle = '#000000';
-		ctx.font = '16px Arial';
-		ctx.textAlign = 'center';
+		// Mine body (black circle)
+		ctx.fillStyle = exploded ? COLORS.MINE : '#000000';
+		ctx.beginPath();
+		ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+		ctx.fill();
 		
-		if (tile.flagged) {
-			ctx.fillStyle = tile.type === 'mine' ? '#00ff00' : '#ff0000';
-			ctx.fillText('🚩', x + TILE_SIZE / 2, y + TILE_SIZE / 2 + 6);
-		} else if (tile.revealed) {
-			if (tile.type === 'mine') {
-				ctx.fillText('💣', x + TILE_SIZE / 2, y + TILE_SIZE / 2 + 6);
-			} else if (tile.type === 'numbered' && tile.number > 0) {
-				ctx.fillStyle = getNumberColor(tile.number);
-				ctx.fillText(tile.number.toString(), x + TILE_SIZE / 2, y + TILE_SIZE / 2 + 6);
-			}
+		// Mine spikes
+		ctx.strokeStyle = exploded ? COLORS.MINE : '#000000';
+		ctx.lineWidth = 2;
+		const spikeLength = radius * 0.6;
+		
+		// 8 spikes around the mine
+		for (let i = 0; i < 8; i++) {
+			const angle = (i * Math.PI) / 4;
+			const startX = centerX + Math.cos(angle) * radius;
+			const startY = centerY + Math.sin(angle) * radius;
+			const endX = centerX + Math.cos(angle) * (radius + spikeLength);
+			const endY = centerY + Math.sin(angle) * (radius + spikeLength);
+			
+			ctx.beginPath();
+			ctx.moveTo(startX, startY);
+			ctx.lineTo(endX, endY);
+			ctx.stroke();
 		}
+		
+		// Highlight on mine
+		if (!exploded) {
+			ctx.fillStyle = '#ffffff';
+			ctx.beginPath();
+			ctx.arc(centerX - radius * 0.3, centerY - radius * 0.3, radius * 0.2, 0, 2 * Math.PI);
+			ctx.fill();
+		}
+	}
+	
+	function renderNumber(x, y, number) {
+		ctx.fillStyle = COLORS.NUMBERS[number - 1] || '#000000';
+		ctx.font = 'bold 18px Arial';
+		ctx.textAlign = 'center';
+		ctx.textBaseline = 'middle';
+		ctx.fillText(number.toString(), x + TILE_SIZE / 2, y + TILE_SIZE / 2);
+	}
+	
+	function renderFlag(x, y, isCorrect = false) {
+		const flagX = x + TILE_SIZE / 2;
+		const flagY = y + TILE_SIZE / 2;
+		const flagWidth = TILE_SIZE * 0.4;
+		const flagHeight = TILE_SIZE * 0.25;
+		
+		// Flag pole
+		ctx.strokeStyle = '#654321';
+		ctx.lineWidth = 2;
+		ctx.beginPath();
+		ctx.moveTo(flagX - flagWidth / 2, flagY - flagHeight);
+		ctx.lineTo(flagX - flagWidth / 2, flagY + flagHeight);
+		ctx.stroke();
+		
+		// Flag cloth
+		ctx.fillStyle = isCorrect ? '#00aa00' : '#ff0000';
+		ctx.beginPath();
+		ctx.moveTo(flagX - flagWidth / 2, flagY - flagHeight);
+		ctx.lineTo(flagX + flagWidth / 2, flagY - flagHeight / 2);
+		ctx.lineTo(flagX - flagWidth / 2, flagY);
+		ctx.closePath();
+		ctx.fill();
+		
+		// Flag outline
+		ctx.strokeStyle = '#000000';
+		ctx.lineWidth = 1;
+		ctx.stroke();
 	}
 
 	function renderPlayer(player, x, y, isCurrentPlayer) {
-		const size = TILE_SIZE * 0.6;
-		const offsetX = (TILE_SIZE - size) / 2;
-		const offsetY = (TILE_SIZE - size) / 2;
+		const centerX = x + TILE_SIZE / 2;
+		const centerY = y + TILE_SIZE / 2;
+		const radius = TILE_SIZE * 0.35;
 		
-		ctx.fillStyle = isCurrentPlayer ? '#00ff00' : '#0088ff';
-		ctx.fillRect(x + offsetX, y + offsetY, size, size);
+		// Player circle with border
+		ctx.fillStyle = isCurrentPlayer ? '#ffff00' : '#0088ff';
+		ctx.beginPath();
+		ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+		ctx.fill();
 		
-		// Player name
-		ctx.fillStyle = '#ffffff';
-		ctx.font = '12px Arial';
+		// Player border
+		ctx.strokeStyle = isCurrentPlayer ? '#ff8800' : '#004488';
+		ctx.lineWidth = 2;
+		ctx.stroke();
+		
+		// Player indicator (arrow or dot)
+		if (isCurrentPlayer) {
+			// Current player gets a small white center dot
+			ctx.fillStyle = '#ffffff';
+			ctx.beginPath();
+			ctx.arc(centerX, centerY, radius * 0.3, 0, 2 * Math.PI);
+			ctx.fill();
+		}
+		
+		// Player name with background
+		ctx.font = '10px Arial';
 		ctx.textAlign = 'center';
-		ctx.fillText(player.username, x + TILE_SIZE / 2, y - 5);
+		ctx.textBaseline = 'middle';
+		
+		const nameY = y - 8;
+		const textWidth = ctx.measureText(player.username).width;
+		
+		// Name background
+		ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+		ctx.fillRect(centerX - textWidth / 2 - 2, nameY - 6, textWidth + 4, 12);
+		
+		// Name text
+		ctx.fillStyle = '#ffffff';
+		ctx.fillText(player.username, centerX, nameY);
 	}
 
 	function renderUI() {
-		// Game info panel
+		// Top game info panel with minesweeper style
 		const padding = 20;
-		const panelHeight = 100;
+		const panelHeight = 90;
 		
-		ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+		// Panel background with 3D border
+		ctx.fillStyle = COLORS.COVERED;
 		ctx.fillRect(0, 0, canvas.width, panelHeight);
 		
-		ctx.fillStyle = '#ffffff';
-		ctx.font = '18px Arial';
-		ctx.textAlign = 'left';
+		// 3D panel border
+		ctx.strokeStyle = COLORS.BORDER_DARK;
+		ctx.lineWidth = 2;
+		ctx.strokeRect(0, 0, canvas.width, panelHeight);
+		
+		// Inner highlight
+		ctx.strokeStyle = COLORS.BORDER_LIGHT;
+		ctx.lineWidth = 1;
+		ctx.strokeRect(2, 2, canvas.width - 4, panelHeight - 4);
 		
 		if (gameState.player) {
-			const elapsedTime = Math.floor((Date.now() - gameState.gameInfo.startTime) / 1000);
-			ctx.fillText(`Score: ${gameState.player.score}`, padding, 30);
-			ctx.fillText(`Flags: ${gameState.player.flags}`, padding, 55);
-			ctx.fillText(`Time: ${elapsedTime}s`, padding, 80);
+			ctx.fillStyle = '#000000';
+			ctx.font = 'bold 16px Arial';
+			ctx.textAlign = 'left';
 			
+			const elapsedTime = Math.floor((Date.now() - gameState.gameInfo.startTime) / 1000);
+			
+			// Left side info
+			ctx.fillText(`Score: ${gameState.player.score}`, padding, 28);
+			ctx.fillText(`Flags: ${gameState.player.flags}`, padding, 50);
+			ctx.fillText(`Time: ${elapsedTime}s`, padding, 72);
+			
+			// Right side info
 			ctx.textAlign = 'right';
-			ctx.fillText(`Mines Remaining: ${gameState.gameInfo.minesRemaining}`, canvas.width - padding, 30);
-			ctx.fillText(`Status: ${gameState.player.alive ? 'Alive' : 'Dead'}`, canvas.width - padding, 55);
+			ctx.fillText(`Mines: ${gameState.gameInfo.minesRemaining}`, canvas.width - padding, 28);
+			
+			const statusColor = gameState.player.alive ? '#008000' : '#ff0000';
+			ctx.fillStyle = statusColor;
+			ctx.fillText(`${gameState.player.alive ? 'ALIVE' : 'DEAD'}`, canvas.width - padding, 50);
+			
+			// Position info
+			ctx.fillStyle = '#000000';
+			ctx.fillText(`Position: (${gameState.player.x}, ${gameState.player.y})`, canvas.width - padding, 72);
 		}
 		
-		// Instructions
-		ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-		ctx.fillRect(0, canvas.height - 80, canvas.width, 80);
+		// Bottom instruction panel
+		const bottomPanelHeight = 70;
+		const bottomPanelY = canvas.height - bottomPanelHeight;
 		
-		ctx.fillStyle = '#ffffff';
-		ctx.font = '14px Arial';
+		// Panel background
+		ctx.fillStyle = COLORS.COVERED;
+		ctx.fillRect(0, bottomPanelY, canvas.width, bottomPanelHeight);
+		
+		// Panel border
+		ctx.strokeStyle = COLORS.BORDER_DARK;
+		ctx.lineWidth = 2;
+		ctx.strokeRect(0, bottomPanelY, canvas.width, bottomPanelHeight);
+		
+		// Instructions
+		ctx.fillStyle = '#000000';
+		ctx.font = 'bold 12px Arial';
 		ctx.textAlign = 'center';
-		ctx.fillText('WASD/Arrow Keys: Move | Left Click: Flip Tile | Right Click: Flag/Unflag', canvas.width / 2, canvas.height - 45);
-		ctx.fillText('Find and flag all mines to win!', canvas.width / 2, canvas.height - 20);
-	}
-
-	function getNumberColor(number) {
-		const colors = ['#0000ff', '#008000', '#ff0000', '#000080', '#800000', '#008080', '#000000', '#808080'];
-		return colors[number - 1] || '#000000';
+		ctx.fillText('WASD/Arrow Keys: Move | Left Click: Flip Tile | Right Click: Flag/Unflag', canvas.width / 2, bottomPanelY + 25);
+		ctx.fillText('Find and flag all mines to win! Yellow player is you.', canvas.width / 2, bottomPanelY + 45);
 	}
 </script>
 
