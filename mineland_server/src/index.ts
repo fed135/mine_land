@@ -1,5 +1,5 @@
 // @ts-check
-import { listen, routines } from 'kalm';
+import { listen, routines, type Client } from 'kalm';
 import ws from '@kalm/ws';
 
 // Game constants
@@ -95,18 +95,28 @@ interface ViewportUpdatePayload {
 // World generation functions
 function generateSpawnPoints(): { x: number; y: number }[] {
   const spawnPoints: { x: number; y: number }[] = [];
-  const spacing = Math.floor(WORLD_SIZE / Math.sqrt(SPAWN_POINTS));
-  
+  const gridSize = Math.ceil(Math.sqrt(SPAWN_POINTS));
+  const margin = 50; // Safety margin from world edges
+  const availableSize = WORLD_SIZE - 2 * margin;
+  const spacing = Math.floor(availableSize / gridSize);
+
   for (let i = 0; i < SPAWN_POINTS; i++) {
-    const row = Math.floor(i / Math.sqrt(SPAWN_POINTS));
-    const col = i % Math.ceil(Math.sqrt(SPAWN_POINTS));
-    
+    const row = Math.floor(i / gridSize);
+    const col = i % gridSize;
+
+    const x = margin + Math.floor(col * spacing + spacing / 2);
+    const y = margin + Math.floor(row * spacing + spacing / 2);
+
+    // Ensure spawn points are within valid bounds
+    const clampedX = Math.max(margin, Math.min(WORLD_SIZE - margin - 1, x));
+    const clampedY = Math.max(margin, Math.min(WORLD_SIZE - margin - 1, y));
+
     spawnPoints.push({
-      x: Math.floor(col * spacing + spacing / 2),
-      y: Math.floor(row * spacing + spacing / 2)
+      x: clampedX,
+      y: clampedY
     });
   }
-  
+
   return spawnPoints;
 }
 
@@ -123,7 +133,7 @@ function generateWorld(spawnPoints: { x: number; y: number }[]): Tile[][] {
       };
     }
   }
-  
+
   // Reveal spawn points
   for (const spawn of spawnPoints) {
     if (spawn.x >= 0 && spawn.x < WORLD_SIZE && spawn.y >= 0 && spawn.y < WORLD_SIZE) {
@@ -134,36 +144,36 @@ function generateWorld(spawnPoints: { x: number; y: number }[]): Tile[][] {
       };
     }
   }
-  
+
   // Place mines randomly (avoiding spawn points)
   const spawnSet = new Set(spawnPoints.map(s => `${s.x},${s.y}`));
   let minesPlaced = 0;
-  
+
   while (minesPlaced < MINE_COUNT) {
     const x = Math.floor(Math.random() * WORLD_SIZE);
     const y = Math.floor(Math.random() * WORLD_SIZE);
     const key = `${x},${y}`;
-    
+
     if (!spawnSet.has(key) && world[x][y].type !== TileType.MINE) {
       world[x][y].type = TileType.MINE;
       minesPlaced++;
     }
   }
-  
+
   // Place flag tokens randomly (avoiding spawn points and mines)
   let flagTokensPlaced = 0;
-  
+
   while (flagTokensPlaced < FLAG_TOKEN_COUNT) {
     const x = Math.floor(Math.random() * WORLD_SIZE);
     const y = Math.floor(Math.random() * WORLD_SIZE);
     const key = `${x},${y}`;
-    
+
     if (!spawnSet.has(key) && world[x][y].type !== TileType.MINE && world[x][y].type !== TileType.FLAG_TOKEN) {
       world[x][y].type = TileType.FLAG_TOKEN;
       flagTokensPlaced++;
     }
   }
-  
+
   // Calculate numbers for non-mine, non-flag-token tiles
   for (let x = 0; x < WORLD_SIZE; x++) {
     for (let y = 0; y < WORLD_SIZE; y++) {
@@ -178,7 +188,7 @@ function generateWorld(spawnPoints: { x: number; y: number }[]): Tile[][] {
       }
     }
   }
-  
+
   return world;
 }
 
@@ -186,7 +196,9 @@ function countAdjacentMines(world: Tile[][], x: number, y: number): number {
   let count = 0;
   for (let dx = -1; dx <= 1; dx++) {
     for (let dy = -1; dy <= 1; dy++) {
-      if (dx === 0 && dy === 0) continue;
+      if (dx === 0 && dy === 0) {
+        continue;
+      }
       const nx = x + dx;
       const ny = y + dy;
       if (nx >= 0 && nx < WORLD_SIZE && ny >= 0 && ny < WORLD_SIZE) {
@@ -221,14 +233,14 @@ function initializeGame() {
 // Viewport and tile management functions
 function getViewport(playerX: number, playerY: number, viewportWidth?: number, viewportHeight?: number): (Tile & { x: number; y: number })[] {
   const tiles: (Tile & { x: number; y: number })[] = [];
-  
+
   // Calculate dynamic viewport size based on client screen or use defaults
   const defaultTilesX = Math.min(50, 100); // Default viewport (full screen)
   const defaultTilesY = Math.min(40, 100);
-  
+
   const tilesX = viewportWidth ? Math.min(viewportWidth, 100) : defaultTilesX;
   const tilesY = viewportHeight ? Math.min(viewportHeight, 100) : defaultTilesY;
-  
+
   for (let x = playerX - tilesX; x <= playerX + tilesX; x++) {
     for (let y = playerY - tilesY; y <= playerY + tilesY; y++) {
       if (x >= 0 && x < WORLD_SIZE && y >= 0 && y < WORLD_SIZE) {
@@ -236,28 +248,28 @@ function getViewport(playerX: number, playerY: number, viewportWidth?: number, v
       }
     }
   }
-  
+
   return tiles;
 }
 
 function getPlayersInViewport(playerX: number, playerY: number, viewportWidth?: number, viewportHeight?: number): Player[] {
   const playersInView: Player[] = [];
-  
+
   // Calculate dynamic viewport size based on client screen or use defaults
   // Default to reasonable viewport assuming standard screen sizes
   const defaultTilesX = Math.min(50, 100); // Full screen coverage
   const defaultTilesY = Math.min(40, 100); // Full screen coverage
-  
+
   const tilesX = viewportWidth ? Math.min(viewportWidth, 100) : defaultTilesX;
   const tilesY = viewportHeight ? Math.min(viewportHeight, 100) : defaultTilesY;
-  
+
   for (const player of gameState.players.values()) {
-    if (Math.abs(player.x - playerX) <= tilesX && 
+    if (Math.abs(player.x - playerX) <= tilesX &&
         Math.abs(player.y - playerY) <= tilesY) {
       playersInView.push(player);
     }
   }
-  
+
   return playersInView;
 }
 
@@ -270,7 +282,9 @@ function isValidPosition(x: number, y: number): boolean {
 }
 
 function isTileWalkable(x: number, y: number): boolean {
-  if (!isValidPosition(x, y)) return false;
+  if (!isValidPosition(x, y)) {
+    return false;
+  }
   const tile = gameState.world[x][y];
   return tile.revealed || tile.flagged;
 }
@@ -291,14 +305,14 @@ function findPlayerBySession(sessionId: string): Player | null {
 function getUniquePlayersForLeaderboard(): Player[] {
   // Get unique players by session ID to avoid duplicates in leaderboard
   const uniquePlayers = new Map<string, Player>();
-  
+
   // First, collect all players from sessions (this is the authoritative source)
   for (const [sessionId, session] of playerSessions) {
     if (session.player.score > 0) { // Only include players with score
       uniquePlayers.set(sessionId, session.player);
     }
   }
-  
+
   return Array.from(uniquePlayers.values());
 }
 
@@ -306,23 +320,29 @@ const server = listen({
   port: 8080,
   transport: ws(),
   routine: routines.tick({ hz: 60 }),
-  host: '0.0.0.0',
+  host: '0.0.0.0'
 });
 
 // Game logic functions
 function handleTileFlip(playerId: string, x: number, y: number): boolean {
   const player = gameState.players.get(playerId);
-  if (!player || !player.alive || gameState.gameEnded) return false;
-  
-  if (!isValidPosition(x, y) || !isAdjacent(player.x, player.y, x, y)) return false;
-  
+  if (!player || !player.alive || gameState.gameEnded) {
+    return false;
+  }
+
+  if (!isValidPosition(x, y) || !isAdjacent(player.x, player.y, x, y)) {
+    return false;
+  }
+
   const tile = gameState.world[x][y];
-  if (tile.revealed || tile.flagged) return false;
-  
+  if (tile.revealed || tile.flagged) {
+    return false;
+  }
+
   // Reveal tile
   tile.revealed = true;
   player.score += 1;
-  
+
   if (tile.type === TileType.MINE) {
     // Explosion!
     handleExplosion(x, y);
@@ -339,33 +359,39 @@ function handleTileFlip(playerId: string, x: number, y: number): boolean {
       tile.type = TileType.EMPTY;
     }
   }
-  
+
   return true;
 }
 
 function handleTileFlag(playerId: string, x: number, y: number): boolean {
   const player = gameState.players.get(playerId);
-  if (!player || !player.alive || gameState.gameEnded || player.flags <= 0) return false;
-  
-  if (!isValidPosition(x, y) || !isAdjacent(player.x, player.y, x, y)) return false;
-  
+  if (!player || !player.alive || gameState.gameEnded || player.flags <= 0) {
+    return false;
+  }
+
+  if (!isValidPosition(x, y) || !isAdjacent(player.x, player.y, x, y)) {
+    return false;
+  }
+
   const tile = gameState.world[x][y];
-  if (tile.revealed || tile.flagged) return false;
-  
+  if (tile.revealed || tile.flagged) {
+    return false;
+  }
+
   // Place flag
   tile.flagged = true;
   tile.flaggedBy = playerId;
   player.flags -= 1;
-  
+
   if (tile.type === TileType.MINE) {
     player.score += 3; // Bonus for flagging mine
     gameState.minesRemaining -= 1;
   }
-  
+
   return true;
 }
 
-function handleTileUnflag(playerId: string, x: number, y: number): boolean {
+function handleTileUnflag(): boolean {
   // Flags cannot be removed once placed - game rule change
   return false;
 }
@@ -373,20 +399,20 @@ function handleTileUnflag(playerId: string, x: number, y: number): boolean {
 function handleExplosion(x: number, y: number) {
   const affectedTiles: { x: number; y: number }[] = [];
   const killedPlayers: string[] = [];
-  
+
   // 3-tile radius explosion
   for (let dx = -3; dx <= 3; dx++) {
     for (let dy = -3; dy <= 3; dy++) {
       if (dx * dx + dy * dy <= 9) { // Circular radius
         const nx = x + dx;
         const ny = y + dy;
-        
+
         if (isValidPosition(nx, ny)) {
           const tile = gameState.world[nx][ny];
           if (!tile.revealed) {
             tile.revealed = true;
             affectedTiles.push({ x: nx, y: ny });
-            
+
             // Chain reactions
             if (tile.type === TileType.MINE && !tile.exploded) {
               tile.exploded = true;
@@ -397,7 +423,7 @@ function handleExplosion(x: number, y: number) {
       }
     }
   }
-  
+
   // Kill players in explosion radius
   for (const player of gameState.players.values()) {
     const dist = Math.sqrt((player.x - x) ** 2 + (player.y - y) ** 2);
@@ -406,11 +432,11 @@ function handleExplosion(x: number, y: number) {
       killedPlayers.push(player.id);
     }
   }
-  
+
   // Mark explosion site
   gameState.world[x][y].type = TileType.EXPLOSION;
   gameState.world[x][y].exploded = true;
-  
+
   // Broadcast explosion
   server.broadcast('explosion', {
     x, y,
@@ -426,20 +452,22 @@ function checkGameEnd(): boolean {
 // Initialize the game
 initializeGame();
 
-server.on('connection', (client: any) => {
+server.on('connection', (client: Client) => {
   console.log(`Client connected: ${client.label}`);
-  
+
   // Will be set up properly when player preferences are received
   let player: Player;
   let isReconnection = false;
-  
+
   // Handle player actions
   client.subscribe('player-action', (data: PlayerActionPayload) => {
     const player = gameState.players.get(client.label);
-    if (!player || !player.alive || gameState.gameEnded) return;
-    
+    if (!player || !player.alive || gameState.gameEnded) {
+      return;
+    }
+
     let actionSuccess = false;
-    
+
     switch (data.action) {
       case 'move':
         if (isAdjacent(player.x, player.y, data.x, data.y) && isTileWalkable(data.x, data.y)) {
@@ -458,7 +486,7 @@ server.on('connection', (client: any) => {
         actionSuccess = handleTileUnflag(client.label, data.x, data.y);
         break;
     }
-    
+
     if (actionSuccess) {
       // Send updated viewport to player
       const viewportUpdate: ViewportUpdatePayload = {
@@ -466,7 +494,7 @@ server.on('connection', (client: any) => {
         players: getPlayersInViewport(player.x, player.y, data.viewportWidth, data.viewportHeight)
       };
       client.write('viewport-update', viewportUpdate);
-      
+
       // Broadcast player state changes
       server.broadcast('player-update', {
         player: player,
@@ -474,27 +502,27 @@ server.on('connection', (client: any) => {
         x: data.x,
         y: data.y
       });
-      
+
       // Broadcast leaderboard update to all players
       const uniquePlayers = getUniquePlayersForLeaderboard();
       server.broadcast('leaderboard-update', { players: uniquePlayers });
-      
+
       // Check for game end
       if (checkGameEnd() && !gameState.gameEnded) {
         gameState.gameEnded = true;
         const leaderboard = Array.from(gameState.players.values())
           .filter(p => p.score > 0)
           .sort((a, b) => b.score - a.score);
-        
+
         server.broadcast('game-end', { leaderboard });
       }
     }
   });
-  
+
   // Handle player preferences
   client.subscribe('player-preferences', (data: { name: string; color: string; sessionId?: string }) => {
     let sessionId = data.sessionId;
-    
+
     // Check for reconnection
     if (sessionId) {
       const existingPlayer = findPlayerBySession(sessionId);
@@ -502,7 +530,7 @@ server.on('connection', (client: any) => {
         // Reconnection - restore existing player
         player = existingPlayer;
         player.connected = true;
-        
+
         // Remove old connection entries for this player to avoid duplicates
         for (const [playerId, playerData] of gameState.players) {
           if (playerData === existingPlayer && playerId !== client.label) {
@@ -510,7 +538,7 @@ server.on('connection', (client: any) => {
             console.log(`Removed old connection ${playerId} for reconnecting player`);
           }
         }
-        
+
         // Update player ID to new connection
         player.id = client.label;
         gameState.players.set(client.label, player);
@@ -518,7 +546,7 @@ server.on('connection', (client: any) => {
         console.log(`Player reconnected: ${player.username} (${sessionId})`);
       }
     }
-    
+
     // New player or failed reconnection
     if (!player) {
       sessionId = generateSessionId();
@@ -543,17 +571,17 @@ server.on('connection', (client: any) => {
         player.color = data.color;
       }
     }
-    
+
     // Store/update session
     playerSessions.set(sessionId, {
       sessionId,
       player,
       lastActive: Date.now()
     });
-    
+
     // Send session ID back to client
     client.write('session-assigned', { sessionId });
-    
+
     // Send welcome payload now that player is set up
     const welcomePayload: WelcomePayload = {
       playerId: client.label,
@@ -570,11 +598,11 @@ server.on('connection', (client: any) => {
       spawnPoints: gameState.spawnPoints
     };
     client.write('welcome', welcomePayload);
-    
+
     // Send initial leaderboard data and broadcast updated leaderboard
     const uniquePlayers = getUniquePlayersForLeaderboard();
     client.write('leaderboard-update', { players: uniquePlayers });
-    
+
     // Notify other clients about player (join or reconnect)
     if (!isReconnection) {
       server.broadcast('player-joined', { player });
@@ -586,15 +614,15 @@ server.on('connection', (client: any) => {
         y: player.y
       });
     }
-    
+
     // Broadcast updated leaderboard
     server.broadcast('leaderboard-update', { players: uniquePlayers });
   });
-  
+
   // Handle client disconnect
   client.on('disconnect', () => {
     console.log(`Client disconnected: ${client.label}`);
-    
+
     const player = gameState.players.get(client.label);
     if (player) {
       player.connected = false;
