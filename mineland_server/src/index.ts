@@ -6,7 +6,8 @@ import ws from '@kalm/ws';
 const WORLD_SIZE = 1000;
 const SPAWN_POINTS = 10;
 const VIEWPORT_RADIUS = 5;
-const MINE_COUNT = Math.floor(WORLD_SIZE * WORLD_SIZE * 0.05); // 5% mine density
+const MINE_COUNT = Math.floor(WORLD_SIZE * WORLD_SIZE * 0.075); // 7.5% mine density
+const FLAG_TOKEN_COUNT = Math.floor(WORLD_SIZE * WORLD_SIZE * 0.02); // 2% flag token density
 
 // Tile types
 const TileType = {
@@ -14,7 +15,7 @@ const TileType = {
   EMPTY: 'empty',
   NUMBERED: 'numbered',
   MINE: 'mine',
-  FLAG: 'flag',
+  FLAG_TOKEN: 'flag_token',
   EXPLOSION: 'explosion'
 } as const;
 
@@ -40,6 +41,7 @@ interface Player {
   flags: number;
   alive: boolean;
   connected: boolean;
+  color?: string;
 }
 
 // Game state
@@ -51,6 +53,15 @@ interface GameState {
   gameEnded: boolean;
   minesRemaining: number;
 }
+
+// Session management
+interface PlayerSession {
+  sessionId: string;
+  player: Player;
+  lastActive: number;
+}
+
+const playerSessions = new Map<string, PlayerSession>();
 
 // Message payloads
 interface WelcomePayload {
@@ -139,10 +150,24 @@ function generateWorld(spawnPoints: { x: number; y: number }[]): Tile[][] {
     }
   }
   
-  // Calculate numbers for non-mine tiles
+  // Place flag tokens randomly (avoiding spawn points and mines)
+  let flagTokensPlaced = 0;
+  
+  while (flagTokensPlaced < FLAG_TOKEN_COUNT) {
+    const x = Math.floor(Math.random() * WORLD_SIZE);
+    const y = Math.floor(Math.random() * WORLD_SIZE);
+    const key = `${x},${y}`;
+    
+    if (!spawnSet.has(key) && world[x][y].type !== TileType.MINE && world[x][y].type !== TileType.FLAG_TOKEN) {
+      world[x][y].type = TileType.FLAG_TOKEN;
+      flagTokensPlaced++;
+    }
+  }
+  
+  // Calculate numbers for non-mine, non-flag-token tiles
   for (let x = 0; x < WORLD_SIZE; x++) {
     for (let y = 0; y < WORLD_SIZE; y++) {
-      if (world[x][y].type !== TileType.MINE) {
+      if (world[x][y].type !== TileType.MINE && world[x][y].type !== TileType.FLAG_TOKEN) {
         const mineCount = countAdjacentMines(world, x, y);
         if (mineCount > 0) {
           world[x][y].type = TileType.NUMBERED;
@@ -254,6 +279,29 @@ function getRandomSpawnPoint(): { x: number; y: number } {
   return gameState.spawnPoints[Math.floor(Math.random() * gameState.spawnPoints.length)];
 }
 
+function generateSessionId(): string {
+  return 'session_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
+}
+
+function findPlayerBySession(sessionId: string): Player | null {
+  const session = playerSessions.get(sessionId);
+  return session ? session.player : null;
+}
+
+function getUniquePlayersForLeaderboard(): Player[] {
+  // Get unique players by session ID to avoid duplicates in leaderboard
+  const uniquePlayers = new Map<string, Player>();
+  
+  // First, collect all players from sessions (this is the authoritative source)
+  for (const [sessionId, session] of playerSessions) {
+    if (session.player.score > 0) { // Only include players with score
+      uniquePlayers.set(sessionId, session.player);
+    }
+  }
+  
+  return Array.from(uniquePlayers.values());
+}
+
 const server = listen({
   port: 8080,
   transport: ws(),
@@ -279,6 +327,17 @@ function handleTileFlip(playerId: string, x: number, y: number): boolean {
     // Explosion!
     handleExplosion(x, y);
     return true;
+  } else if (tile.type === TileType.FLAG_TOKEN) {
+    // Collect flag token - give player additional flags
+    player.flags += 2; // Grant 2 flags per token
+    // Convert to appropriate tile type after collection
+    const adjacentMines = countAdjacentMines(gameState.world, x, y);
+    if (adjacentMines > 0) {
+      tile.type = TileType.NUMBERED;
+      tile.number = adjacentMines;
+    } else {
+      tile.type = TileType.EMPTY;
+    }
   }
   
   return true;
@@ -307,24 +366,8 @@ function handleTileFlag(playerId: string, x: number, y: number): boolean {
 }
 
 function handleTileUnflag(playerId: string, x: number, y: number): boolean {
-  const player = gameState.players.get(playerId);
-  if (!player || !player.alive || gameState.gameEnded) return false;
-  
-  if (!isValidPosition(x, y) || !isAdjacent(player.x, player.y, x, y)) return false;
-  
-  const tile = gameState.world[x][y];
-  if (!tile.flagged) return false;
-  
-  // Remove flag
-  tile.flagged = false;
-  player.flags += 1;
-  
-  if (tile.type === TileType.MINE) {
-    gameState.minesRemaining += 1;
-  }
-  
-  tile.flaggedBy = undefined;
-  return true;
+  // Flags cannot be removed once placed - game rule change
+  return false;
 }
 
 function handleExplosion(x: number, y: number) {
@@ -386,43 +429,9 @@ initializeGame();
 server.on('connection', (client: any) => {
   console.log(`Client connected: ${client.label}`);
   
-  const spawnPoint = getRandomSpawnPoint();
-  const player: Player = {
-    id: client.label,
-    x: spawnPoint.x,
-    y: spawnPoint.y,
-    username: `Player${client.label.substring(0, 6)}`,
-    score: 0,
-    flags: 3,
-    alive: true,
-    connected: true
-  };
-  
-  gameState.players.set(client.label, player);
-  
-  // Send welcome message and current game state
-  const welcomePayload: WelcomePayload = {
-    playerId: client.label,
-    player: player,
-    gameState: {
-      startTime: gameState.gameStartTime,
-      ended: gameState.gameEnded,
-      minesRemaining: gameState.minesRemaining
-    },
-    viewport: {
-      tiles: getViewport(player.x, player.y),
-      players: getPlayersInViewport(player.x, player.y)
-    },
-    spawnPoints: gameState.spawnPoints
-  };
-  client.write('welcome', welcomePayload);
-  
-  // Send initial leaderboard data
-  const allPlayers = Array.from(gameState.players.values());
-  client.write('leaderboard-update', { players: allPlayers });
-  
-  // Notify other clients about new player
-  server.broadcast('player-joined', { player });
+  // Will be set up properly when player preferences are received
+  let player: Player;
+  let isReconnection = false;
   
   // Handle player actions
   client.subscribe('player-action', (data: PlayerActionPayload) => {
@@ -467,8 +476,8 @@ server.on('connection', (client: any) => {
       });
       
       // Broadcast leaderboard update to all players
-      const allPlayers = Array.from(gameState.players.values());
-      server.broadcast('leaderboard-update', { players: allPlayers });
+      const uniquePlayers = getUniquePlayersForLeaderboard();
+      server.broadcast('leaderboard-update', { players: uniquePlayers });
       
       // Check for game end
       if (checkGameEnd() && !gameState.gameEnded) {
@@ -480,6 +489,106 @@ server.on('connection', (client: any) => {
         server.broadcast('game-end', { leaderboard });
       }
     }
+  });
+  
+  // Handle player preferences
+  client.subscribe('player-preferences', (data: { name: string; color: string; sessionId?: string }) => {
+    let sessionId = data.sessionId;
+    
+    // Check for reconnection
+    if (sessionId) {
+      const existingPlayer = findPlayerBySession(sessionId);
+      if (existingPlayer) {
+        // Reconnection - restore existing player
+        player = existingPlayer;
+        player.connected = true;
+        
+        // Remove old connection entries for this player to avoid duplicates
+        for (const [playerId, playerData] of gameState.players) {
+          if (playerData === existingPlayer && playerId !== client.label) {
+            gameState.players.delete(playerId);
+            console.log(`Removed old connection ${playerId} for reconnecting player`);
+          }
+        }
+        
+        // Update player ID to new connection
+        player.id = client.label;
+        gameState.players.set(client.label, player);
+        isReconnection = true;
+        console.log(`Player reconnected: ${player.username} (${sessionId})`);
+      }
+    }
+    
+    // New player or failed reconnection
+    if (!player) {
+      sessionId = generateSessionId();
+      const spawnPoint = getRandomSpawnPoint();
+      player = {
+        id: client.label,
+        x: spawnPoint.x,
+        y: spawnPoint.y,
+        username: data.name?.trim().substring(0, 12) || `Player${client.label.substring(0, 6)}`,
+        score: 0,
+        flags: 3,
+        alive: true,
+        connected: true,
+        color: data.color
+      };
+      gameState.players.set(client.label, player);
+      console.log(`New player created: ${player.username} (${sessionId})`);
+    } else if (data.name?.trim()) {
+      // Update existing player preferences
+      player.username = data.name.trim().substring(0, 12);
+      if (data.color) {
+        player.color = data.color;
+      }
+    }
+    
+    // Store/update session
+    playerSessions.set(sessionId, {
+      sessionId,
+      player,
+      lastActive: Date.now()
+    });
+    
+    // Send session ID back to client
+    client.write('session-assigned', { sessionId });
+    
+    // Send welcome payload now that player is set up
+    const welcomePayload: WelcomePayload = {
+      playerId: client.label,
+      player: player,
+      gameState: {
+        startTime: gameState.gameStartTime,
+        ended: gameState.gameEnded,
+        minesRemaining: gameState.minesRemaining
+      },
+      viewport: {
+        tiles: getViewport(player.x, player.y),
+        players: getPlayersInViewport(player.x, player.y)
+      },
+      spawnPoints: gameState.spawnPoints
+    };
+    client.write('welcome', welcomePayload);
+    
+    // Send initial leaderboard data and broadcast updated leaderboard
+    const uniquePlayers = getUniquePlayersForLeaderboard();
+    client.write('leaderboard-update', { players: uniquePlayers });
+    
+    // Notify other clients about player (join or reconnect)
+    if (!isReconnection) {
+      server.broadcast('player-joined', { player });
+    } else {
+      server.broadcast('player-update', {
+        player: player,
+        action: 'reconnected',
+        x: player.x,
+        y: player.y
+      });
+    }
+    
+    // Broadcast updated leaderboard
+    server.broadcast('leaderboard-update', { players: uniquePlayers });
   });
   
   // Handle client disconnect
@@ -500,6 +609,7 @@ console.log('- Transport: WebSocket');
 console.log('- Tick rate: 60hz');
 console.log('- World size: 1000x1000');
 console.log('- Mine count: ' + MINE_COUNT);
+console.log('- Flag token count: ' + FLAG_TOKEN_COUNT);
 console.log('- Spawn points: ' + SPAWN_POINTS);
 console.log('- Viewport radius: ' + VIEWPORT_RADIUS);
 
