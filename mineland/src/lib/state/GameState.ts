@@ -1,0 +1,28 @@
+export enum GameStateType {
+    WELCOME_SCREEN = 'WELCOME_SCREEN',
+    CONNECTING = 'CONNECTING',
+    PLAYING = 'PLAYING',
+    DEAD = 'DEAD',
+    GAME_OVER = 'GAME_OVER'
+}
+
+export enum ConnectionState {
+    DISCONNECTED = 'DISCONNECTED',
+    CONNECTING = 'CONNECTING',
+    CONNECTED = 'CONNECTED',
+    RECONNECTING = 'RECONNECTING'
+}
+
+export enum PlayerState {
+    SPAWNING = 'SPAWNING',
+    ALIVE = 'ALIVE',
+    DEAD = 'DEAD',
+    SPECTATING = 'SPECTATING'
+}
+
+export enum UIState {
+    WELCOME = 'WELCOME',
+    HUD = 'HUD',
+    DEATH_POPUP = 'DEATH_POPUP',
+    GAME_OVER_SCREEN = 'GAME_OVER_SCREEN'
+}
