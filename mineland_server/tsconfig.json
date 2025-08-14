@@ -3,6 +3,7 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "node",
+    "allowImportingTsExtensions": true,
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,
@@ -19,7 +20,8 @@
     "noImplicitAny": true,
     "noImplicitReturns": true,
     "noUnusedLocals": true,
-    "noUnusedParameters": true
+    "noUnusedParameters": true,
+    "isolatedModules": true
   },
   "include": [
     "src/**/*"

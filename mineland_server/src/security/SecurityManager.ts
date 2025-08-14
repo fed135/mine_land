@@ -37,6 +37,7 @@ export class SecurityManager {
   private securityMonitor: SecurityMonitor;
   private config: SecurityConfig;
   private bannedPlayers = new Set<string>();
+  private cleanupInterval?: NodeJS.Timeout;
 
   constructor(config: SecurityConfig = {
     enableRateLimiting: true,
@@ -45,7 +46,7 @@ export class SecurityManager {
     enableReplayProtection: false  // Temporarily disabled due to action format changes
   }) {
     this.config = config;
-    
+
     // Initialize security components
     this.rateLimiter = new RateLimiter();
     this.behaviorValidator = new BehaviorValidator();
@@ -55,13 +56,14 @@ export class SecurityManager {
 
     // Set up cleanup intervals
     this.setupCleanupTasks();
-    
-    console.log('🛡️  Security Manager initialized with:', {
+
+    console.log(JSON.stringify({
+      message: 'Security Manager initialized',
       rateLimiting: config.enableRateLimiting,
       behaviorValidation: config.enableBehaviorValidation,
       sessionSecurity: config.enableSessionSecurity,
       replayProtection: config.enableReplayProtection
-    });
+    }));
   }
 
   // Validate player action through all security layers
@@ -111,7 +113,7 @@ export class SecurityManager {
           shouldDisconnect: true
         };
       }
-      
+
       if (sessionData.playerId !== playerId) {
         this.securityMonitor.logEvent({
           type: 'session',
@@ -141,19 +143,9 @@ export class SecurityManager {
       }
     }
 
-    // 3. Replay protection
+    // 3. Replay protection (check only, don't record yet)
     if (this.config.enableReplayProtection) {
-      const replayCheck = this.replayProtection.isReplayAction(playerId, actionType, actionData);
-      if (replayCheck.isReplay) {
-        this.securityMonitor.logReplayAttempt(replayCheck.replayInfo!);
-        return {
-          allowed: false,
-          reason: 'Action replay detected',
-          severity: 'medium'
-        };
-      }
-
-      // Check for duplicate actions
+      // Check for duplicate actions first (before any recording)
       if (this.replayProtection.isDuplicateAction(playerId, actionType, actionData)) {
         this.securityMonitor.logEvent({
           type: 'replay',
@@ -165,6 +157,22 @@ export class SecurityManager {
           allowed: false,
           reason: 'Duplicate action',
           severity: 'low'
+        };
+      }
+
+      // Check for replay without recording
+      const replayCheck = this.replayProtection.checkForReplay(playerId, actionType, actionData);
+      if (replayCheck.isReplay) {
+        this.securityMonitor.logEvent({
+          type: 'replay',
+          severity: 'medium',
+          playerId,
+          description: 'Action replay detected'
+        });
+        return {
+          allowed: false,
+          reason: 'Action replay detected',
+          severity: 'medium'
         };
       }
 
@@ -192,7 +200,6 @@ export class SecurityManager {
         const deltaX = Math.abs(actionData.x - playerPosition.x);
         const deltaY = Math.abs(actionData.y - playerPosition.y);
         if (deltaX > 1 || deltaY > 1) {
-          console.warn(`Invalid movement: Player ${playerId} tried to move from (${playerPosition.x},${playerPosition.y}) to (${actionData.x},${actionData.y})`);
           return {
             allowed: false,
             reason: 'Can only move to adjacent tiles',
@@ -206,7 +213,6 @@ export class SecurityManager {
         const deltaX = Math.abs(actionData.x - playerPosition.x);
         const deltaY = Math.abs(actionData.y - playerPosition.y);
         if (deltaX > 1 || deltaY > 1) {
-          console.warn(`Invalid tile interaction: Player ${playerId} tried to interact with tile (${actionData.x},${actionData.y}) from (${playerPosition.x},${playerPosition.y})`);
           return {
             allowed: false,
             reason: 'Can only interact with nearby tiles',
@@ -214,6 +220,11 @@ export class SecurityManager {
           };
         }
       }
+    }
+
+    // All validations passed - record the action if replay protection is enabled
+    if (this.config.enableReplayProtection) {
+      this.replayProtection.isReplayAction(playerId, actionType, actionData);
     }
 
     return { allowed: true };
@@ -236,7 +247,6 @@ export class SecurityManager {
     };
   }
 
-
   // Create secure session for player
   createPlayerSession(playerId: string, username: string, metadata?: any): {
     sessionId: string;
@@ -251,9 +261,13 @@ export class SecurityManager {
     }
 
     const session = this.sessionManager.createSession(playerId, username, metadata);
-    
-    console.log(`Created secure session for player ${username} (${playerId})`);
-    
+
+    console.log(JSON.stringify({
+      message: 'Created secure session',
+      playerId,
+      username
+    }));
+
     return {
       sessionId: session.sessionId,
       sessionToken: session.token
@@ -271,7 +285,7 @@ export class SecurityManager {
     }
 
     const sessionData = this.sessionManager.validateSession(sessionId, sessionToken);
-    
+
     if (sessionData) {
       return {
         valid: true,
@@ -298,20 +312,24 @@ export class SecurityManager {
   // Ban player
   banPlayer(playerId: string, reason: string): void {
     this.bannedPlayers.add(playerId);
-    
+
     // Invalidate all sessions for this player
     if (this.config.enableSessionSecurity) {
       this.sessionManager.invalidatePlayerSessions(playerId);
     }
-    
-    console.error(`🚫 PLAYER BANNED: ${playerId} - ${reason}`);
+
+    console.log(JSON.stringify({
+      message: 'Player banned',
+      playerId,
+      reason
+    }));
   }
 
   // Unban player
   unbanPlayer(playerId: string): boolean {
     const wasBanned = this.bannedPlayers.has(playerId);
     this.bannedPlayers.delete(playerId);
-    
+
     if (wasBanned) {
       this.securityMonitor.logEvent({
         type: 'general',
@@ -319,10 +337,13 @@ export class SecurityManager {
         playerId,
         description: 'Player unbanned'
       });
-      
-      console.log(`✅ PLAYER UNBANNED: ${playerId}`);
+
+      console.log(JSON.stringify({
+        message: 'Player unbanned',
+        playerId
+      }));
     }
-    
+
     return wasBanned;
   }
 
@@ -335,7 +356,7 @@ export class SecurityManager {
       sessionManager: boolean;
       replayProtection: boolean;
     };
-  } {
+    } {
     return {
       bannedPlayers: Array.from(this.bannedPlayers),
       systemHealth: {
@@ -350,13 +371,24 @@ export class SecurityManager {
   // Setup cleanup tasks
   private setupCleanupTasks(): void {
     // Run cleanup every 5 minutes
-    setInterval(() => {
+    this.cleanupInterval = setInterval(() => {
       this.rateLimiter.cleanup();
       this.sessionManager.cleanupExpiredSessions();
       this.replayProtection.cleanup();
     }, 300000); // 5 minutes
 
-    console.log('🧹 Security cleanup tasks scheduled (5 minute intervals)');
+    console.log(JSON.stringify({
+      message: 'Security cleanup tasks scheduled',
+      interval: '5 minutes'
+    }));
+  }
+
+  // Cleanup method for tests
+  destroy(): void {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = undefined;
+    }
   }
 
   // Get component instances (for advanced usage)

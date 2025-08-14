@@ -34,7 +34,10 @@ export class MovementSystem extends System {
   requestMovement(playerId: string, targetX: number, targetY: number): boolean {
     const playerEntity = this.playerRegistry.getPlayerEntity(playerId);
     if (!playerEntity) {
-      console.warn(`MovementSystem: Player ${playerId} not found`);
+      console.log(JSON.stringify({
+        message: 'Player not found',
+        playerId
+      }));
       return false;
     }
 
@@ -42,28 +45,51 @@ export class MovementSystem extends System {
     const posComp = playerEntity.getComponent<PositionComponent>('position');
 
     if (!playerComp || !posComp) {
-      console.warn(`MovementSystem: Player ${playerId} missing components`);
+      console.log(JSON.stringify({
+        message: 'Player missing components',
+        playerId
+      }));
       return false;
     }
 
     // Security: Enhanced movement validation
     if (!this.isValidPosition(targetX, targetY)) {
-      console.warn(`MovementSystem: Player ${playerId} attempted invalid position: ${targetX}, ${targetY}`);
+      console.log(JSON.stringify({
+        message: 'Invalid position attempted',
+        playerId,
+        targetX,
+        targetY
+      }));
       return false;
     }
 
     if (!this.isAdjacent(posComp.x, posComp.y, targetX, targetY)) {
-      console.warn(`MovementSystem: Player ${playerId} attempted non-adjacent move: from ${posComp.x},${posComp.y} to ${targetX},${targetY}`);
+      console.log(JSON.stringify({
+        message: 'Non-adjacent move attempted',
+        playerId,
+        fromX: posComp.x,
+        fromY: posComp.y,
+        toX: targetX,
+        toY: targetY
+      }));
       return false;
     }
 
     if (!this.isTileWalkable(targetX, targetY)) {
-      console.warn(`MovementSystem: Player ${playerId} attempted move to non-walkable tile: ${targetX}, ${targetY}`);
+      console.log(JSON.stringify({
+        message: 'Move to non-walkable tile attempted',
+        playerId,
+        targetX,
+        targetY
+      }));
       return false;
     }
 
     if (!playerComp.alive) {
-      console.warn(`MovementSystem: Dead player ${playerId} attempted movement`);
+      console.log(JSON.stringify({
+        message: 'Dead player attempted movement',
+        playerId
+      }));
       return false;
     }
 
@@ -72,10 +98,7 @@ export class MovementSystem extends System {
     return true;
   }
 
-  update(deltaTime: number): void {
-    // Movement requests are now processed immediately for better responsiveness
-    // No queuing needed
-  }
+  // No update method needed - movement is processed immediately via requestMovement()
 
   private processMovement(request: MovementRequest): void {
     const playerEntity = this.playerRegistry.getPlayerEntity(request.playerId);
@@ -103,7 +126,7 @@ export class MovementSystem extends System {
   private isAdjacent(x1: number, y1: number, x2: number, y2: number): boolean {
     const deltaX = Math.abs(x1 - x2);
     const deltaY = Math.abs(y1 - y2);
-    
+
     // Only allow orthogonal movement (Game Rules: up, down, left, right only)
     return (deltaX === 1 && deltaY === 0) || (deltaX === 0 && deltaY === 1);
   }

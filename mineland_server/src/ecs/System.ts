@@ -5,7 +5,9 @@ export abstract class System {
   protected entities = new Set<Entity>();
   protected active = true;
 
-  abstract update(deltaTime: number): void;
+  update(deltaTime: number): void {
+    // Default empty implementation - override if needed for periodic processing
+  }
 
   addEntity(entity: Entity): void {
     if (this.shouldProcessEntity(entity)) {

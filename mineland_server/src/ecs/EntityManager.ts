@@ -5,7 +5,6 @@ import { System } from './System.ts';
 export class EntityManager {
   private entities = new Set<Entity>();
   private systems = new Map<string, System>();
-  private entitiesToDestroy = new Set<Entity>();
 
   createEntity(): Entity {
     const entity = new Entity();
@@ -20,7 +19,15 @@ export class EntityManager {
   }
 
   destroyEntity(entity: Entity): void {
-    this.entitiesToDestroy.add(entity);
+    // Immediate destruction - no deferred processing needed for server
+    this.entities.delete(entity);
+
+    // Remove from all systems
+    for (const system of this.systems.values()) {
+      system.removeEntity(entity);
+    }
+
+    entity.destroy();
   }
 
   addSystem(name: string, system: System): void {
@@ -44,27 +51,21 @@ export class EntityManager {
     }
   }
 
-  update(deltaTime: number): void {
-    // Clean up entities marked for destruction
-    for (const entity of this.entitiesToDestroy) {
-      this.entities.delete(entity);
-
-      // Remove from all systems
-      for (const system of this.systems.values()) {
-        system.removeEntity(entity);
-      }
-
-      entity.destroy();
-    }
-    this.entitiesToDestroy.clear();
-
-    // Update all active systems
+  // Re-evaluate entity for all systems (call when components change)
+  reevaluateEntity(entity: Entity): void {
     for (const system of this.systems.values()) {
-      if (system.isActive()) {
-        system.update(deltaTime);
+      const currentlyInSystem = system.getEntities().has(entity);
+      const shouldBeInSystem = system['shouldProcessEntity'](entity);
+
+      if (shouldBeInSystem && !currentlyInSystem) {
+        system.addEntity(entity);
+      } else if (!shouldBeInSystem && currentlyInSystem) {
+        system.removeEntity(entity);
       }
     }
   }
+
+  // No update method needed - server processes all actions synchronously via WebSocket events
 
   getEntities(): Set<Entity> {
     return new Set(this.entities);
@@ -80,7 +81,6 @@ export class EntityManager {
       entity.destroy();
     }
     this.entities.clear();
-    this.entitiesToDestroy.clear();
 
     // Destroy all systems
     for (const system of this.systems.values()) {

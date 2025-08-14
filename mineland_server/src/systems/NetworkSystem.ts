@@ -31,24 +31,7 @@ export class NetworkSystem extends System {
     this.serverInstance = server;
   }
 
-  update(deltaTime: number): void {
-    // Process entities that need network synchronization
-    for (const entity of this.entities) {
-      const networkComp = entity.getComponent<NetworkComponent>('network');
-      if (networkComp && networkComp.needsSync) {
-        this.syncEntityToNetwork(entity);
-        networkComp.needsSync = false;
-        networkComp.lastSyncTime = Date.now();
-      }
-    }
-  }
-
-  private syncEntityToNetwork(entity: Entity): void {
-    // Implementation depends on what type of entity needs syncing
-    if (entity.hasComponent('player')) {
-      this.syncPlayerToNetwork(entity);
-    }
-  }
+  // No update method needed - networking is handled immediately via direct broadcasts
 
   private syncPlayerToNetwork(entity: Entity): void {
     const playerComp = entity.getComponent<PlayerComponent>('player');
@@ -182,7 +165,6 @@ export class NetworkSystem extends System {
       ...viewport
     });
   }
-
 
   // Broadcast player state change
   broadcastPlayerUpdate(playerId: string): void {

@@ -32,7 +32,7 @@ export class SessionManager {
   createSession(playerId: string, username: string, metadata?: { ipAddress?: string; userAgent?: string }): SecureSession {
     const sessionId = this.generateSessionId();
     const now = Date.now();
-    
+
     const sessionData: SessionData = {
       playerId,
       username,
@@ -43,7 +43,7 @@ export class SessionManager {
     };
 
     const token = this.generateSecureToken(sessionId, sessionData);
-    
+
     const session: SecureSession = {
       sessionId,
       token,
@@ -52,23 +52,26 @@ export class SessionManager {
     };
 
     this.sessions.set(sessionId, session);
-    
-    console.log(`Created secure session for player ${username} (${playerId})`);
+
+    console.log(JSON.stringify({
+      message: 'Created secure session',
+      playerId,
+      username,
+      sessionId: sessionId
+    }));
     return session;
   }
 
   // Validate and retrieve session
   validateSession(sessionId: string, token: string): SessionData | null {
     const session = this.sessions.get(sessionId);
-    
+
     if (!session) {
-      console.warn(`Session validation failed: Session ${sessionId} not found`);
       return null;
     }
 
     // Check if session is expired
     if (Date.now() > session.expiresAt) {
-      console.warn(`Session validation failed: Session ${sessionId} expired`);
       this.sessions.delete(sessionId);
       return null;
     }
@@ -76,20 +79,19 @@ export class SessionManager {
     // Validate token
     const expectedToken = this.generateSecureToken(sessionId, session.data);
     if (!this.constantTimeCompare(token, expectedToken)) {
-      console.warn(`Session validation failed: Invalid token for session ${sessionId}`);
       return null;
     }
 
     // Update last activity
     session.data.lastActivity = Date.now();
-    
+
     return session.data;
   }
 
   // Refresh session (extend expiration)
   refreshSession(sessionId: string): boolean {
     const session = this.sessions.get(sessionId);
-    
+
     if (!session) {
       return false;
     }
@@ -102,7 +104,7 @@ export class SessionManager {
     // Extend expiration
     session.expiresAt = Date.now() + this.SESSION_DURATION;
     session.data.lastActivity = Date.now();
-    
+
     return true;
   }
 
@@ -110,11 +112,10 @@ export class SessionManager {
   invalidateSession(sessionId: string): boolean {
     const existed = this.sessions.has(sessionId);
     this.sessions.delete(sessionId);
-    
+
     if (existed) {
-      console.log(`Session ${sessionId} invalidated`);
     }
-    
+
     return existed;
   }
 
@@ -208,7 +209,6 @@ export class SessionManager {
     });
 
     if (expiredSessions.length > 0) {
-      console.log(`Cleaned up ${expiredSessions.length} expired sessions`);
     }
 
     return expiredSessions.length;
@@ -219,7 +219,7 @@ export class SessionManager {
     totalSessions: number;
     activeSessions: number;
     expiredSessions: number;
-  } {
+    } {
     const now = Date.now();
     let activeSessions = 0;
     let expiredSessions = 0;
@@ -256,7 +256,6 @@ export class SessionManager {
     });
 
     if (invalidatedCount > 0) {
-      console.log(`Invalidated ${invalidatedCount} sessions for player ${playerId}`);
     }
 
     return invalidatedCount;

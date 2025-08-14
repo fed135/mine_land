@@ -34,7 +34,10 @@ setInterval(() => {
   
   for (const [sessionId, session] of playerSessions) {
     if (now - session.lastSeen > TIMEOUT) {
-      console.log(`Session ${sessionId} timed out`);
+      console.log(JSON.stringify({
+        message: "Session timed out",
+        sessionId
+      }));
       gameManager.removePlayer(session.player.id);
       playerSessions.delete(sessionId);
     }
@@ -44,10 +47,17 @@ setInterval(() => {
 // No update loop needed - all actions are synchronous
 
 server.on('connection', (client: Client) => {
-  console.log(`Client connected: ${client.label}`);
+  console.log(JSON.stringify({
+    message: "Client connected",
+    clientLabel: client.label
+  }));
 
   client.subscribe('player-preferences', (data: any) => {
-    console.log(`Player preferences received from ${client.label}:`, data);
+    console.log(JSON.stringify({
+      message: "Player preferences received",
+      clientLabel: client.label,
+      preferences: data
+    }));
 
     let player: any;
     let isReconnection = false;
@@ -88,11 +98,18 @@ server.on('connection', (client: Client) => {
               sessionToken: data.sessionToken
             };
             
-            console.log(`Player ${player.username} reconnected with secure session ${data.sessionId}`);
+            console.log(JSON.stringify({
+              message: "Player reconnected",
+              username: player.username,
+              sessionId: data.sessionId
+            }));
           }
         }
       } else {
-        console.warn(`Invalid session attempt by client ${client.label}`);
+        console.log(JSON.stringify({
+          message: "Invalid session attempt",
+          clientLabel: client.label
+        }));
       }
     }
 
@@ -134,7 +151,12 @@ server.on('connection', (client: Client) => {
           sessionId: playerComp.sessionId
         };
         
-        console.log(`New player ${player.username} joined at ${player.x}, ${player.y} with secure session`);
+        console.log(JSON.stringify({
+          message: "New player joined",
+          username: player.username,
+          x: player.x,
+          y: player.y
+        }));
       }
     }
 
@@ -182,7 +204,10 @@ server.on('connection', (client: Client) => {
   client.subscribe('player-action', (data: any) => {
     const session = Array.from(playerSessions.values()).find(s => s.player.clientId === client.label);
     if (!session) {
-      console.warn(`Action from unknown client: ${client.label}`);
+      console.log(JSON.stringify({
+        message: "Action from unknown client",
+        clientLabel: client.label
+      }));
       return;
     }
 
@@ -194,7 +219,11 @@ server.on('connection', (client: Client) => {
     if (playerEntity) {
       const playerComp = playerEntity.getComponent('player');
       if (playerComp && !playerComp.alive && data.action !== 'move') {
-        console.warn(`Dead player ${player.id} attempted action: ${data.action}`);
+        console.log(JSON.stringify({
+          message: "Dead player attempted action",
+          playerId: player.id,
+          action: data.action
+        }));
         // Send death status reminder to client
         client.write('player-death', {
           playerId: player.id,
@@ -217,12 +246,20 @@ server.on('connection', (client: Client) => {
     
     // If no session credentials, log but continue with basic validation
     if (!sessionId || !sessionToken) {
-      console.log(`Action without session credentials from player ${player.id} - using basic validation`);
+      console.log(JSON.stringify({
+        message: "Action without session credentials",
+        playerId: player.id
+      }));
     }
 
     switch (data.action) {
       case 'move':
-        console.log(`Server: Move request from ${player.id} to (${data.x}, ${data.y})`);
+        console.log(JSON.stringify({
+          message: "Move request",
+          playerId: player.id,
+          targetX: data.x,
+          targetY: data.y
+        }));
         actionSuccess = gameManager.requestPlayerMovement(player.id, data.x, data.y, sessionId, sessionToken);
         break;
       case 'flip':
@@ -259,7 +296,9 @@ server.on('connection', (client: Client) => {
 
       // Check for game end
       if (gameManager.checkGameEnd()) {
-        console.log('Game ended - all mines flagged!');
+        console.log(JSON.stringify({
+          message: "Game ended - all mines flagged"
+        }));
         server.broadcast('game-end', {
           reason: 'All mines have been flagged',
           timestamp: Date.now()
@@ -269,7 +308,10 @@ server.on('connection', (client: Client) => {
   });
 
   client.on('disconnect', () => {
-    console.log(`Client disconnected: ${client.label}`);
+    console.log(JSON.stringify({
+      message: "Client disconnected",
+      clientLabel: client.label
+    }));
     
     // Mark player as disconnected but don't remove immediately
     const session = Array.from(playerSessions.values()).find(s => s.player.clientId === client.label);
@@ -279,7 +321,11 @@ server.on('connection', (client: Client) => {
         const playerComp = playerEntity.getComponent('player');
         if (playerComp) {
           playerComp.connected = false;
-          console.log(`Player ${session.player.username} (${session.player.id}) marked as disconnected`);
+          console.log(JSON.stringify({
+            message: "Player marked as disconnected",
+            username: session.player.username,
+            playerId: session.player.id
+          }));
         }
       }
     }
@@ -292,7 +338,10 @@ server.on('connection', (client: Client) => {
       const dashboard = gameManager.getSecurityDashboard();
       client.write('security-dashboard-data', dashboard);
     } else {
-      console.warn(`Unauthorized security dashboard access attempt from ${client.label}`);
+      console.log(JSON.stringify({
+        message: "Unauthorized security dashboard access",
+        clientLabel: client.label
+      }));
     }
   });
 });
@@ -302,15 +351,18 @@ function generateSessionId(): string {
   return Math.random().toString(36).substring(2) + Date.now().toString(36);
 }
 
-console.log('🎮 ECS Mine Land Server Started');
-console.log('- Port: 8080');
-console.log('- Tick rate: 60hz');
-console.log('- World size: 1000x1000');
-console.log('- ECS Architecture: Enabled');
-console.log('- Security Features: Essential Only');
-console.log('  * Rate limiting: Enabled');
-console.log('  * Movement validation: Adjacent tiles only');
-console.log('  * Interaction validation: Nearby tiles only');
-console.log('  * Alive status validation: Dead players restricted');
-console.log('  * Session security: Enabled');
-console.log('  * Replay protection: Enabled');
+console.log(JSON.stringify({
+  message: "ECS Mine Land Server Started",
+  port: 8080,
+  tickRate: "60hz",
+  worldSize: "1000x1000",
+  ecsArchitecture: true,
+  securityFeatures: {
+    rateLimiting: true,
+    movementValidation: "Adjacent tiles only",
+    interactionValidation: "Nearby tiles only",
+    aliveStatusValidation: "Dead players restricted",
+    sessionSecurity: true,
+    replayProtection: true
+  }
+}));

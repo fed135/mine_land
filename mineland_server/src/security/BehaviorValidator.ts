@@ -17,7 +17,7 @@ export class BehaviorValidator {
     // Check for teleportation (non-adjacent movement)
     const deltaX = Math.abs(toX - fromX);
     const deltaY = Math.abs(toY - fromY);
-    
+
     if (deltaX > 1 || deltaY > 1) {
       this.recordSuspiciousActivity({
         playerId,
@@ -57,7 +57,7 @@ export class BehaviorValidator {
     // Check if tile is adjacent to player
     const deltaX = Math.abs(tileX - playerX);
     const deltaY = Math.abs(tileY - playerY);
-    
+
     if (deltaX > 1 || deltaY > 1) {
       this.recordSuspiciousActivity({
         playerId,
@@ -87,7 +87,7 @@ export class BehaviorValidator {
         playerId,
         activityType: 'invalid_action',
         severity: 'low',
-        description: `Player attempted to flip already revealed tile`,
+        description: 'Player attempted to flip already revealed tile',
         timestamp: Date.now(),
         data: { action, tileState: data.tileState }
       });
@@ -121,14 +121,6 @@ export class BehaviorValidator {
   // Record suspicious activity
   private recordSuspiciousActivity(activity: SuspiciousActivity): void {
     this.suspiciousActivities.push(activity);
-    
-    // Log immediately for high severity
-    if (activity.severity === 'high') {
-      console.warn(`🚨 HIGH SECURITY ALERT: ${activity.description}`, {
-        playerId: activity.playerId,
-        data: activity.data
-      });
-    }
 
     // Keep only recent activities (last hour)
     const oneHourAgo = Date.now() - 3600000;
@@ -138,15 +130,15 @@ export class BehaviorValidator {
   // Get suspicious activities for monitoring
   getSuspiciousActivities(playerId?: string, severity?: string): SuspiciousActivity[] {
     let activities = this.suspiciousActivities;
-    
+
     if (playerId) {
       activities = activities.filter(a => a.playerId === playerId);
     }
-    
+
     if (severity) {
       activities = activities.filter(a => a.severity === severity);
     }
-    
+
     return activities.sort((a, b) => b.timestamp - a.timestamp);
   }
 
@@ -154,10 +146,10 @@ export class BehaviorValidator {
   cleanup(): void {
     const oneHourAgo = Date.now() - 3600000;
     const fiveMinutesAgo = Date.now() - 300000;
-    
+
     // Clean up suspicious activities
     this.suspiciousActivities = this.suspiciousActivities.filter(a => a.timestamp > oneHourAgo);
-    
+
     // Clean up position data
     for (const [playerId, position] of this.playerLastPositions.entries()) {
       if (position.timestamp < fiveMinutesAgo) {

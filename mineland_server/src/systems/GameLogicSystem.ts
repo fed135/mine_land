@@ -21,7 +21,7 @@ export class GameLogicSystem extends System {
   private playerRegistry: PlayerRegistry;
   private explosionCallbacks: ((data: any) => void)[] = [];
   private readonly WORLD_SIZE: number;
-  
+
   // Performance cache for mine counts
   private totalMines: number = 0;
   private flaggedMines: number = 0;
@@ -41,7 +41,10 @@ export class GameLogicSystem extends System {
   requestTileAction(playerId: string, x: number, y: number, action: 'flip' | 'flag' | 'unflag'): boolean {
     const playerEntity = this.playerRegistry.getPlayerEntity(playerId);
     if (!playerEntity) {
-      console.warn(`GameLogicSystem: Player ${playerId} not found`);
+      console.log(JSON.stringify({
+        message: 'Player not found',
+        playerId
+      }));
       return false;
     }
 
@@ -49,29 +52,53 @@ export class GameLogicSystem extends System {
     const playerPos = playerEntity.getComponent<PositionComponent>('position');
 
     if (!playerComp || !playerPos) {
-      console.warn(`GameLogicSystem: Player ${playerId} missing components`);
+      console.log(JSON.stringify({
+        message: 'Player missing components',
+        playerId
+      }));
       return false;
     }
 
     // Security: Enhanced interaction validation
     if (!this.isValidPosition(x, y)) {
-      console.warn(`GameLogicSystem: Player ${playerId} attempted ${action} at invalid position: ${x}, ${y}`);
+      console.log(JSON.stringify({
+        message: 'Invalid position attempted',
+        playerId,
+        action,
+        x,
+        y
+      }));
       return false;
     }
 
     if (!this.isAdjacent(playerPos.x, playerPos.y, x, y)) {
-      console.warn(`GameLogicSystem: Player ${playerId} attempted non-adjacent ${action}: player at ${playerPos.x},${playerPos.y}, tile at ${x},${y}`);
+      console.log(JSON.stringify({
+        message: 'Non-adjacent interaction attempted',
+        playerId,
+        action,
+        playerX: playerPos.x,
+        playerY: playerPos.y,
+        tileX: x,
+        tileY: y
+      }));
       return false;
     }
 
     if (!playerComp.alive) {
-      console.warn(`GameLogicSystem: Dead player ${playerId} attempted ${action}`);
+      console.log(JSON.stringify({
+        message: 'Dead player attempted action',
+        playerId,
+        action
+      }));
       return false;
     }
 
     // Additional validation for flagging
     if (action === 'flag' && playerComp.flags <= 0) {
-      console.warn(`GameLogicSystem: Player ${playerId} attempted to flag with no flags remaining`);
+      console.log(JSON.stringify({
+        message: 'Flag attempt with no flags remaining',
+        playerId
+      }));
       return false;
     }
 
@@ -84,9 +111,7 @@ export class GameLogicSystem extends System {
     this.explosionCallbacks.push(callback);
   }
 
-  update(deltaTime: number): void {
-    // All tile actions are now processed immediately - no queuing needed
-  }
+  // No update method needed - tile actions are processed immediately via requestTileAction()
 
   private processTileAction(request: TileActionRequest): void {
     switch (request.action) {
@@ -132,7 +157,7 @@ export class GameLogicSystem extends System {
     // Handle mine explosion
     if (tileComp.type === 'mine') {
       const explosionData = this.handleExplosion(x, y, playerEntity);
-      
+
       // Trigger explosion callbacks
       for (const callback of this.explosionCallbacks) {
         callback(explosionData);
@@ -193,7 +218,13 @@ export class GameLogicSystem extends System {
 
   private handleTileUnflag(playerId: string, x: number, y: number): void {
     // Flags cannot be removed once placed - game rule
-    console.warn(`GameLogicSystem: Player ${playerId} attempted to unflag tile at ${x},${y} (not allowed)`);
+    console.log(JSON.stringify({
+      message: 'Unflag attempt blocked',
+      playerId,
+      x,
+      y,
+      reason: 'Flags cannot be removed once placed'
+    }));
   }
 
   private handleExplosion(x: number, y: number, playerEntity: Entity): any {
@@ -210,12 +241,12 @@ export class GameLogicSystem extends System {
 
     // Create explosion effect and kill players in circular radius of 2 tiles
     const explosionRadius = 2;
-    
+
     for (let dx = -explosionRadius; dx <= explosionRadius; dx++) {
       for (let dy = -explosionRadius; dy <= explosionRadius; dy++) {
         const explosionX = x + dx;
         const explosionY = y + dy;
-        
+
         // Calculate distance from center - use circular radius
         const distance = Math.sqrt(dx * dx + dy * dy);
         if (distance > explosionRadius) {
@@ -276,7 +307,6 @@ export class GameLogicSystem extends System {
     return explosionData;
   }
 
-
   private isValidPosition(x: number, y: number): boolean {
     return x >= 0 && x < this.WORLD_SIZE && y >= 0 && y < this.WORLD_SIZE;
   }
@@ -284,18 +314,20 @@ export class GameLogicSystem extends System {
   private isAdjacent(x1: number, y1: number, x2: number, y2: number): boolean {
     const deltaX = Math.abs(x1 - x2);
     const deltaY = Math.abs(y1 - y2);
-    
+
     // Allow both orthogonal and diagonal for tile interactions (as per game rules line 23)
     return deltaX <= 1 && deltaY <= 1 && !(deltaX === 0 && deltaY === 0);
   }
 
   // Initialize mine counts cache (called once during world generation)
   initializeMineCountsCache(): void {
-    if (this.mineCountsInitialized) return;
-    
+    if (this.mineCountsInitialized) {
+      return;
+    }
+
     this.totalMines = 0;
     this.flaggedMines = 0;
-    
+
     for (const [, tileData] of this.tileRegistry.getAllTileData()) {
       if (tileData.type === 'mine') {
         this.totalMines++;
@@ -304,7 +336,7 @@ export class GameLogicSystem extends System {
         }
       }
     }
-    
+
     this.mineCountsInitialized = true;
   }
 

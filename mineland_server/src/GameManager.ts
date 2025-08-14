@@ -85,7 +85,12 @@ export class GameManager {
     this.generateWorld();
     this.gameState.gameStartTime = Date.now();
     
-    console.log(`World generated: ${WORLD_SIZE}x${WORLD_SIZE} with ${MINE_COUNT} mines and ${SPAWN_POINTS} spawn points`);
+    console.log(JSON.stringify({
+      message: "World generated",
+      worldSize: `${WORLD_SIZE}x${WORLD_SIZE}`,
+      mineCount: MINE_COUNT,
+      spawnPoints: SPAWN_POINTS
+    }));
   }
 
   private generateSpawnPoints(): { x: number; y: number }[] {
@@ -303,13 +308,27 @@ export class GameManager {
     const posComp = playerEntity.getComponent('position') as PositionComponent;
     if (!posComp) return false;
     
-    console.log(`GameManager: Movement request from ${playerId}: (${posComp.x},${posComp.y}) -> (${targetX},${targetY})`);
+    console.log(JSON.stringify({
+      message: "Movement request",
+      playerId,
+      fromX: posComp.x,
+      fromY: posComp.y,
+      toX: targetX,
+      toY: targetY
+    }));
     
     // Basic movement validation (adjacent tiles only)
     const deltaX = Math.abs(targetX - posComp.x);
     const deltaY = Math.abs(targetY - posComp.y);
     if (deltaX > 1 || deltaY > 1) {
-      console.warn(`Invalid movement: Player ${playerId} tried to move from (${posComp.x},${posComp.y}) to (${targetX},${targetY})`);
+      console.log(JSON.stringify({
+        message: "Invalid movement",
+        playerId,
+        fromX: posComp.x,
+        fromY: posComp.y,
+        toX: targetX,
+        toY: targetY
+      }));
       return false;
     }
     
@@ -327,7 +346,11 @@ export class GameManager {
       );
       
       if (!validation.allowed) {
-        console.warn(`Movement blocked for ${playerId}: ${validation.reason}`);
+        console.log(JSON.stringify({
+          message: "Movement blocked",
+          playerId,
+          reason: validation.reason
+        }));
         return false;
       }
     }
@@ -348,13 +371,24 @@ export class GameManager {
     const deltaX = Math.abs(x - posComp.x);
     const deltaY = Math.abs(y - posComp.y);
     if (deltaX > 1 || deltaY > 1) {
-      console.warn(`Invalid tile interaction: Player ${playerId} tried to interact with tile (${x},${y}) from (${posComp.x},${posComp.y})`);
+      console.log(JSON.stringify({
+        message: "Invalid tile interaction",
+        playerId,
+        tileX: x,
+        tileY: y,
+        playerX: posComp.x,
+        playerY: posComp.y
+      }));
       return false;
     }
     
     // Check if player is alive for non-spectator actions
     if (!playerComp?.alive && action !== 'move') {
-      console.warn(`Dead player ${playerId} tried to perform action: ${action}`);
+      console.log(JSON.stringify({
+        message: "Dead player action attempt",
+        playerId,
+        action
+      }));
       return false;
     }
     
@@ -371,7 +405,11 @@ export class GameManager {
       );
       
       if (!validation.allowed) {
-        console.warn(`Tile action blocked for ${playerId}: ${validation.reason}`);
+        console.log(JSON.stringify({
+          message: "Tile action blocked",
+          playerId,
+          reason: validation.reason
+        }));
         if (validation.shouldDisconnect) {
           this.handleSecurityViolation(playerId, validation.reason!);
         }
@@ -454,15 +492,8 @@ export class GameManager {
     return { ...this.gameState };
   }
 
-  update(deltaTime: number): void {
-    this.entityManager.update(deltaTime);
-  }
-
-  // Lightweight update for animations only  
-  updateAnimations(): void {
-    // Only update non-critical systems like animations
-    // Removed heavy ECS system updates for performance
-  }
+  // Note: Server operates synchronously via WebSocket events
+  // No update loop needed - all actions are processed immediately
 
   // Security methods
   createSecurePlayerSession(playerId: string, username: string, metadata?: any): { sessionId: string; sessionToken: string } {
@@ -502,12 +533,20 @@ export class GameManager {
   }
 
   private handleSecurityViolation(playerId: string, reason: string): void {
-    console.error(`Security violation by player ${playerId}: ${reason}`);
+    console.log(JSON.stringify({
+      message: "Security violation",
+      playerId,
+      reason
+    }));
     
     // For now, just log. Could be extended to auto-ban or disconnect
     const playerStatus = this.securityManager.getPlayerSecurityStatus(playerId);
     if (playerStatus.riskScore > 70) {
-      console.warn(`Player ${playerId} has high risk score: ${playerStatus.riskScore}`);
+      console.log(JSON.stringify({
+        message: "High risk player",
+        playerId,
+        riskScore: playerStatus.riskScore
+      }));
     }
   }
 
@@ -516,6 +555,7 @@ export class GameManager {
     this.entityManager.clear();
     this.tileRegistry.clear();
     this.playerRegistry.clear();
+    this.securityManager.destroy();
   }
 
   // Security component access (for advanced usage)

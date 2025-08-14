@@ -34,7 +34,34 @@ export class ReplayProtection {
     return crypto.createHash('sha256').update(actionString).digest('hex');
   }
 
-  // Check if action is a replay
+  // Check if action would be a replay (read-only, doesn't record)
+  checkForReplay(playerId: string, actionType: string, actionData: any): {
+    isReplay: boolean;
+    signature?: ActionSignature;
+  } {
+    const now = Date.now();
+    const hash = this.generateActionHash(playerId, actionType, actionData, now);
+
+    // Check if we've seen this exact action before
+    const existingAction = this.actionHistory.get(hash);
+
+    if (existingAction) {
+      // This is a potential replay
+      const timeDiff = now - existingAction.timestamp;
+
+      // If the action is within the suspicious timeframe (< 100ms), it's likely a replay
+      if (timeDiff < 100) {
+        return {
+          isReplay: true,
+          signature: existingAction
+        };
+      }
+    }
+
+    return { isReplay: false };
+  }
+
+  // Check if action is a replay (records action)
   isReplayAction(playerId: string, actionType: string, actionData: any): {
     isReplay: boolean;
     signature?: ActionSignature;
@@ -42,25 +69,25 @@ export class ReplayProtection {
   } {
     const now = Date.now();
     const hash = this.generateActionHash(playerId, actionType, actionData, now);
-    
+
     // Check if we've seen this exact action before
     const existingAction = this.actionHistory.get(hash);
-    
+
     if (existingAction) {
       // This is a potential replay
       const timeDiff = now - existingAction.timestamp;
-      
+
       // If the action is within the suspicious timeframe (< 100ms), it's likely a replay
       if (timeDiff < 100) {
         this.recordReplayAttempt(playerId, existingAction);
-        
+
         return {
           isReplay: true,
           signature: existingAction,
           replayInfo: this.replayAttempts.get(playerId)
         };
       }
-      
+
       // If it's been longer, update the existing action timestamp
       existingAction.timestamp = now;
     } else {
@@ -72,7 +99,7 @@ export class ReplayProtection {
         timestamp: now,
         hash
       };
-      
+
       this.actionHistory.set(hash, signature);
     }
 
@@ -97,13 +124,7 @@ export class ReplayProtection {
     }
 
     const replayCount = existingReplay ? existingReplay.replayAttempts : 1;
-    
-    console.warn(`🔄 REPLAY DETECTED: Player ${playerId} attempted replay of ${originalAction.actionType} (${replayCount} attempts)`);
 
-    // Log excessive replay attempts
-    if (replayCount >= this.MAX_REPLAY_ATTEMPTS) {
-      console.error(`🚨 EXCESSIVE REPLAYS: Player ${playerId} has ${replayCount} replay attempts`);
-    }
   }
 
   // Check if player has excessive replay attempts
@@ -119,7 +140,7 @@ export class ReplayProtection {
     isExcessive: boolean;
   } {
     const replayInfo = this.replayAttempts.get(playerId);
-    
+
     return {
       totalReplays: replayInfo ? replayInfo.replayAttempts : 0,
       lastReplayAttempt: replayInfo ? replayInfo.lastAttempt : undefined,
@@ -129,9 +150,9 @@ export class ReplayProtection {
 
   // Check for duplicate actions within a time window
   isDuplicateAction(
-    playerId: string, 
-    actionType: string, 
-    actionData: any, 
+    playerId: string,
+    actionType: string,
+    actionData: any,
     timeWindow: number = 1000
   ): boolean {
     const now = Date.now();
@@ -139,8 +160,8 @@ export class ReplayProtection {
 
     // Find recent actions by this player
     for (const signature of this.actionHistory.values()) {
-      if (signature.playerId === playerId && 
-          signature.actionType === actionType && 
+      if (signature.playerId === playerId &&
+          signature.actionType === actionType &&
           now - signature.timestamp < timeWindow) {
         recentActions.push(signature);
       }
@@ -184,7 +205,9 @@ export class ReplayProtection {
     if (playerActions.length >= 6) {
       const lastSix = playerActions.slice(-6);
       const isAlternatingFlagSpam = lastSix.every((action, index) => {
-        if (index === 0) return true;
+        if (index === 0) {
+          return true;
+        }
         const prevAction = lastSix[index - 1];
         return (action.actionType === 'flag' && prevAction.actionType === 'unflag') ||
                (action.actionType === 'unflag' && prevAction.actionType === 'flag');
@@ -236,7 +259,6 @@ export class ReplayProtection {
     });
 
     if (expiredHashes.length > 0 || expiredPlayers.length > 0) {
-      console.log(`Replay protection cleanup: ${expiredHashes.length} actions, ${expiredPlayers.length} replay records`);
     }
   }
 
@@ -246,7 +268,7 @@ export class ReplayProtection {
     totalReplays: number;
     playersWithReplays: number;
     excessiveReplayPlayers: number;
-  } {
+    } {
     const totalActions = this.actionHistory.size;
     const replayAttempts = Array.from(this.replayAttempts.values());
     const totalReplays = replayAttempts.reduce((sum, replay) => sum + replay.replayAttempts, 0);
@@ -278,6 +300,5 @@ export class ReplayProtection {
       this.actionHistory.delete(hash);
     });
 
-    console.log(`Reset replay protection history for player ${playerId}`);
   }
 }

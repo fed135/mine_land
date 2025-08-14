@@ -102,8 +102,8 @@ export class SecurityMonitor {
 
   // Log replay attempt
   logReplayAttempt(replayInfo: ReplayAttempt): void {
-    const severity = replayInfo.replayAttempts >= 5 ? 'high' : 
-                    replayInfo.replayAttempts >= 3 ? 'medium' : 'low';
+    const severity = replayInfo.replayAttempts >= 5 ? 'high' :
+      replayInfo.replayAttempts >= 3 ? 'medium' : 'low';
 
     this.logEvent({
       type: 'replay',
@@ -125,7 +125,7 @@ export class SecurityMonitor {
     metadata?: any
   ): void {
     const severity = eventType === 'invalidated' ? 'medium' : 'low';
-    
+
     this.logEvent({
       type: 'session',
       severity,
@@ -151,20 +151,21 @@ export class SecurityMonitor {
 
     // Log high risk players
     if (newScore >= 50 && currentScore < 50) {
-      console.warn(`⚠️  PLAYER RISK: ${playerId} reached risk score ${newScore}`);
     }
   }
 
   // Check for alert conditions
   private checkForAlerts(event: SecurityEvent): void {
-    if (!event.playerId) return;
+    if (!event.playerId) {
+      return;
+    }
 
     const playerId = event.playerId;
     const alertKey = `${playerId}_${event.type}`;
-    
+
     // Get recent events for this player and type
     const recentEvents = this.getRecentPlayerEvents(playerId, event.type, 300000); // 5 minutes
-    
+
     // Count by severity
     const severityCounts = {
       low: recentEvents.filter(e => e.severity === 'low').length,
@@ -175,7 +176,7 @@ export class SecurityMonitor {
 
     // Determine alert severity
     let alertSeverity: 'medium' | 'high' | 'critical' | null = null;
-    
+
     if (severityCounts.critical >= this.ALERT_THRESHOLDS.critical) {
       alertSeverity = 'critical';
     } else if (severityCounts.high >= this.ALERT_THRESHOLDS.high) {
@@ -223,21 +224,14 @@ export class SecurityMonitor {
       };
 
       this.alerts.set(alertKey, newAlert);
-      
-      // Log critical alerts immediately
-      if (severity === 'critical') {
-        console.error(`🚨 CRITICAL SECURITY ALERT: Player ${playerId} - ${alertType}`, {
-          eventCount: events.length,
-          alertId: newAlert.id
-        });
-      }
+
     }
   }
 
   // Get recent events for a player
   private getRecentPlayerEvents(playerId: string, type?: string, timeWindow: number = 300000): SecurityEvent[] {
     const now = Date.now();
-    return this.events.filter(event => 
+    return this.events.filter(event =>
       event.playerId === playerId &&
       now - event.timestamp < timeWindow &&
       (!type || event.type === type)
@@ -251,36 +245,7 @@ export class SecurityMonitor {
 
   // Log to console with appropriate formatting
   private logToConsole(event: SecurityEvent): void {
-    const prefix = {
-      low: '💙',
-      medium: '🟡',
-      high: '🟠',
-      critical: '🔴'
-    }[event.severity];
-
-    const message = `${prefix} SECURITY [${event.type.toUpperCase()}]: ${event.description}`;
-    
-    const logData = {
-      playerId: event.playerId,
-      timestamp: new Date(event.timestamp).toISOString(),
-      data: event.data
-    };
-
-    switch (event.severity) {
-      case 'critical':
-        console.error(message, logData);
-        break;
-      case 'high':
-        console.warn(message, logData);
-        break;
-      case 'medium':
-        console.info(message, logData);
-        break;
-      case 'low':
-      default:
-        console.log(message, logData);
-        break;
-    }
+    // Security logging removed for APM/log management compatibility
   }
 
   // Get player risk score
@@ -291,7 +256,7 @@ export class SecurityMonitor {
   // Get high-risk players
   getHighRiskPlayers(threshold: number = 30): Array<{ playerId: string; riskScore: number }> {
     const highRiskPlayers: Array<{ playerId: string; riskScore: number }> = [];
-    
+
     for (const [playerId, riskScore] of this.playerScores.entries()) {
       if (riskScore >= threshold) {
         highRiskPlayers.push({ playerId, riskScore });
@@ -318,7 +283,6 @@ export class SecurityMonitor {
     for (const alert of this.alerts.values()) {
       if (alert.id === alertId) {
         alert.resolved = true;
-        console.log(`✅ Security alert resolved: ${alertId}`);
         return true;
       }
     }
@@ -333,10 +297,10 @@ export class SecurityMonitor {
     eventsBySeverity: Record<string, number>;
     activeAlerts: number;
     highRiskPlayers: number;
-  } {
+    } {
     const now = Date.now();
     const recentEvents = this.events.filter(e => now - e.timestamp < 3600000); // Last hour
-    
+
     const eventsByType: Record<string, number> = {};
     const eventsBySeverity: Record<string, number> = {};
 
@@ -359,18 +323,18 @@ export class SecurityMonitor {
   cleanup(): void {
     const oneHourAgo = Date.now() - 3600000;
     const oneDayAgo = Date.now() - 86400000;
-    
+
     // Remove old events (keep last hour + MAX_EVENTS limit)
     const recentEvents = this.events.filter(e => e.timestamp > oneHourAgo);
     this.events = recentEvents.slice(-this.MAX_EVENTS);
-    
+
     // Clean up resolved alerts older than 24 hours
     for (const [key, alert] of this.alerts.entries()) {
       if (alert.resolved && alert.lastOccurrence < oneDayAgo) {
         this.alerts.delete(key);
       }
     }
-    
+
     // Decay risk scores over time
     for (const [playerId, score] of this.playerScores.entries()) {
       const decayedScore = Math.max(0, score - 1); // Decay by 1 point

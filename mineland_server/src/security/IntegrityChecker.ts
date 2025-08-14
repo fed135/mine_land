@@ -167,11 +167,13 @@ export class IntegrityChecker {
       if (tile.state === 'revealed' && !tile.isMine && tile.adjacentMines !== undefined) {
         // Count actual adjacent mines
         let actualAdjacentMines = 0;
-        
+
         for (let dx = -1; dx <= 1; dx++) {
           for (let dy = -1; dy <= 1; dy++) {
-            if (dx === 0 && dy === 0) continue;
-            
+            if (dx === 0 && dy === 0) {
+              continue;
+            }
+
             const neighborTile = tileRegistry.getTileData(tile.x + dx, tile.y + dy);
             if (neighborTile && neighborTile.isMine) {
               actualAdjacentMines++;
@@ -185,11 +187,11 @@ export class IntegrityChecker {
             severity: 'high',
             description: `Incorrect adjacent mines: claimed ${tile.adjacentMines}, actual ${actualAdjacentMines} at (${tile.x}, ${tile.y})`,
             timestamp: Date.now(),
-            data: { 
-              x: tile.x, 
-              y: tile.y, 
-              claimed: tile.adjacentMines, 
-              actual: actualAdjacentMines 
+            data: {
+              x: tile.x,
+              y: tile.y,
+              claimed: tile.adjacentMines,
+              actual: actualAdjacentMines
             }
           });
         }
@@ -228,7 +230,6 @@ export class IntegrityChecker {
 
     // Log high severity violations immediately
     allViolations.filter(v => v.severity === 'high').forEach(violation => {
-      console.error(`🔴 INTEGRITY VIOLATION: ${violation.description}`, violation.data);
     });
 
     return { violations: allViolations, summary };
